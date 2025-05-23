@@ -158,6 +158,7 @@ private:
     void send_discovery_request();
     void send_peer_list(const NodeId& requester);
     void broadcast_discovery();
+    void handle_discovery_message(const zmq::message_t& message);
 };
 
 // Implementation begins here
@@ -370,7 +371,8 @@ size_t MeshNetwork::get_peer_count() const {
 
 void MeshNetwork::message_handler_loop() {
     zmq::pollitem_t items[] = {
-        { router_socket_->handle(), 0, ZMQ_POLLIN, 0 }
+        { router_socket_->handle(), 0, ZMQ_POLLIN, 0 },
+        { discovery_socket_->handle(), 0, ZMQ_POLLIN, 0 }
     };
     
     while (running_.load()) {
