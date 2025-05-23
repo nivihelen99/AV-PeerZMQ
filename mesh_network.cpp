@@ -46,6 +46,71 @@ void MeshNetwork::process_goodbye(const NodeId& sender, const Json::Value& data)
     disconnect_peer(sender);
 }
 
+void MeshNetwork::handle_discovery_message(const zmq::message_t& message) {
+    try {
+        std::string msg_str(static_cast<char*>(message.data()), message.size());
+        MessageType type;
+        Json::Value data = parse_message(msg_str, type); // parse_message is an existing method
+
+        if (data.empty()) {
+            // parse_message logs errors or returns empty on failure.
+            // Add minimal log here if needed, e.g., for debugging discovery issues.
+            // std::cerr << "handle_discovery_message: Parsed data is empty." << std::endl;
+            return;
+        }
+
+        if (type == MessageType::PEER_DISCOVERY) {
+            if (!data.isMember("sender") || !data["sender"].isString() ||
+                !data.isMember("port") || !data["port"].isUInt()) {
+                std::cerr << "handle_discovery_message: PEER_DISCOVERY message missing or invalid sender/port fields." << std::endl;
+                return;
+            }
+            
+            std::string sender_id_str = data["sender"].asString();
+            // address_to_node_id is an existing method that parses "ip:port" string to NodeId.
+            NodeId discovered_peer_node = address_to_node_id(sender_id_str);
+
+            if (discovered_peer_node.id.empty()) {
+                // address_to_node_id returns an empty/invalid NodeId on parsing failure.
+                std::cerr << "handle_discovery_message: Failed to parse NodeId from PEER_DISCOVERY message sender: " << sender_id_str << std::endl;
+                return;
+            }
+
+            if (discovered_peer_node.id == local_node_.id) {
+                return; // It's our own broadcast, ignore.
+            }
+
+            // Optional: Log successful reception for debugging.
+            // std::cout << "handle_discovery_message: Received PEER_DISCOVERY via UDP from " << discovered_peer_node.id << std::endl;
+            
+            connect_to_peer(discovered_peer_node); // connect_to_peer is an existing method.
+            
+            // To make discovery more robust/quicker, one might also send their peer list
+            // back to the discovered node. This helps if the discovered node didn't yet know about us.
+            // Example: send_peer_list(discovered_peer_node); 
+            // This would require careful handling of socket readiness if connect_to_peer is asynchronous
+            // or if the peer isn't fully established. For now, connect_to_peer is the primary action.
+
+        } else {
+            // Optional: Log if other unexpected message types are received on the discovery port.
+            // std::cerr << "handle_discovery_message: Received non-PEER_DISCOVERY message on discovery socket. Type: "
+            //           << static_cast<int>(type) << std::endl;
+        }
+    } catch (const Json::Exception& e) {
+        std::cerr << "handle_discovery_message: JSON parsing error: " << e.what() << " Message: " << std::string(static_cast<const char*>(message.data()), message.size()) << std::endl;
+    } catch (const zmq::error_t& e) {
+        // Avoid error spam if socket is closed during shutdown or resource temporarily unavailable.
+        if (running_.load() && e.num() != ETERM && e.num() != EAGAIN) {
+             std::cerr << "handle_discovery_message: ZMQ error: " << e.what() << std::endl;
+        }
+    } catch (const std::exception& e) {
+         // Avoid error spam on shutdown.
+         if (running_.load()) {
+            std::cerr << "handle_discovery_message: Standard error: " << e.what() << std::endl;
+        }
+    }
+}
+
 void MeshNetwork::heartbeat_loop() {
     while (running_.load()) {
         // Send heartbeat to all connected peers
