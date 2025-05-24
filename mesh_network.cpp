@@ -85,12 +85,42 @@ void MeshNetwork::handle_discovery_message(const zmq::message_t& message) {
             
             connect_to_peer(discovered_peer_node); // connect_to_peer is an existing method.
             
-            // To make discovery more robust/quicker, one might also send their peer list
-            // back to the discovered node. This helps if the discovered node didn't yet know about us.
-            // Example: send_peer_list(discovered_peer_node); 
-            // This would require careful handling of socket readiness if connect_to_peer is asynchronous
-            // or if the peer isn't fully established. For now, connect_to_peer is the primary action.
+            // After connecting, send a PEER_DISCOVERY message back to the discovered peer
+            // This allows the other peer to recognize us, connect back if needed, and exchange peer lists.
+            // This helps in actively building the mesh network.
+            Json::Value discovery_data;
+            discovery_data["sender"] = local_node_.id;
+            discovery_data["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            std::string discovery_msg_payload = create_message(MessageType::PEER_DISCOVERY, discovery_data);
 
+            // We need to find the socket associated with this peer to send the message.
+            // connect_to_peer should have established it.
+            // It's crucial that this send doesn't block indefinitely or fail silently if the connection isn't ready.
+            // The send_unicast method handles looking up the peer and its socket.
+            // However, send_unicast creates a JSON message with a "message" field.
+            // We need to send a raw PEER_DISCOVERY message.
+            // Let's adapt the logic from send_unicast or send_peer_list for sending a specific message type.
+
+            std::lock_guard<std::mutex> lock(peers_mutex_);
+            auto it = peers_.find(discovered_peer_node);
+            if (it != peers_.end() && it->second->is_connected && it->second->socket) {
+                try {
+                    zmq::message_t msg(discovery_msg_payload.size());
+                    memcpy(msg.data(), discovery_msg_payload.c_str(), discovery_msg_payload.size());
+                    it->second->socket->send(msg, zmq::send_flags::dontwait);
+                    // std::cout << "Sent PEER_DISCOVERY back to " << discovered_peer_node.id << " after UDP discovery." << std::endl;
+                } catch (const zmq::error_t& e) {
+                    // Log if sending the reciprocal discovery message fails. This is not critical but good for diagnostics.
+                    std::cerr << "Failed to send PEER_DISCOVERY back to " << discovered_peer_node.id
+                              << " after UDP discovery: " << e.what() << std::endl;
+                }
+            } else {
+                // This might happen if connect_to_peer failed or is asynchronous and not yet complete.
+                // std::cerr << "Could not send PEER_DISCOVERY back to " << discovered_peer_node.id
+                //           << " after UDP discovery: Peer not found or not connected." << std::endl;
+            }
+            
         } else {
             // Optional: Log if other unexpected message types are received on the discovery port.
             // std::cerr << "handle_discovery_message: Received non-PEER_DISCOVERY message on discovery socket. Type: "

@@ -7,7 +7,7 @@ Key Features:
 
 Dynamic Peer Discovery:
 Seed Nodes: Nodes can be bootstrapped by connecting to a list of known seed nodes. This provides a reliable way to join an existing mesh.
-UDP Broadcast Discovery: Nodes can discover each other on the local network (LAN) via UDP broadcasts. This allows for zero-configuration setups in LAN environments where nodes can dynamically find each other without prior knowledge.
+UDP Broadcast Discovery: Nodes can discover each other on the local network (LAN) via UDP broadcasts. This allows for zero-configuration setups in LAN environments. The mechanism is designed to be reciprocal: upon discovering a peer via UDP, a node will connect and also prompt the discovered peer to connect back and exchange peer lists, fostering faster full mesh formation.
 Messaging:
 Unicast: Send targeted messages directly to a specific peer.
 Broadcast: Propagate messages to all directly connected peers in the mesh.
@@ -31,7 +31,7 @@ NodeId Struct: A simple structure representing a unique node in the network. It 
 PeerInfo Struct: Stores runtime information about each connected peer. This includes the peer's NodeId, the timestamp of the last message received (last_seen), its connection status (is_connected), and a std::unique_ptr<zmq::socket_t> which is a ZMQ_DEALER socket used to send messages directly to that peer.
 Message Types (Internal Protocol): An enum class MessageType defines the types of messages exchanged internally by MeshNetwork nodes:
 HEARTBEAT: Indicates a node is still alive.
-PEER_DISCOVERY: Used in UDP broadcasts to announce presence, or sent over TCP to request a list of known peers from an already connected peer.
+PEER_DISCOVERY: Used in UDP broadcasts to announce presence, or sent over TCP to request a list of known peers from an already connected peer, or sent back to a UDP-discovered peer to prompt reciprocal connection.
 UNICAST: An application-level message intended for a single target node.
 BROADCAST: An application-level message to be disseminated to all connected peers.
 PEER_LIST: A response to a PEER_DISCOVERY (TCP) request, containing a list of other peers known to the sender. This helps in transitive discovery.
@@ -48,8 +48,10 @@ Node A Starts: Binds its TCP router socket and UDP discovery socket. Starts its 
 Node A Discovery Broadcast: Periodically, Node A's discovery_thread_ sends a PEER_DISCOVERY message via UDP broadcast. This message contains Node A's NodeId (IP and main listening port).
 Node B Starts: Similarly binds sockets and starts threads.
 Node B Receives UDP Discovery: Node B's message_handler_thread_ (polling the discovery_socket_) receives Node A's UDP broadcast. The handle_discovery_message function parses it.
-Node B Connects to Node A: Node B calls connect_to_peer(NodeA_NodeId). This creates a ZMQ_DEALER socket on Node B that connects to Node A's ZMQ_ROUTER socket (TCP).
-Peer List Exchange (Optional but common): Upon connection, nodes might exchange PEER_DISCOVERY (TCP) / PEER_LIST messages to learn about other peers transitively.
+Node B Connects to Node A and Prompts Back:
+Node B calls `connect_to_peer(NodeA_NodeId)`. This creates a ZMQ_DEALER socket on Node B that connects to Node A's ZMQ_ROUTER socket (TCP).
+Node B then sends a `PEER_DISCOVERY` message (over TCP) back to Node A. This prompts Node A to also call `connect_to_peer(NodeB_NodeId)` (if not already attempting) and to send its own peer list to Node B, ensuring a more robust and reciprocal connection establishment.
+Peer List Exchange: Nodes exchange `PEER_LIST` messages (typically in response to TCP `PEER_DISCOVERY` messages) to learn about other peers transitively, helping to build a comprehensive view of the mesh.
 Heartbeating: Node A and Node B now periodically send HEARTBEAT messages to each other over their TCP link.
 Application Messaging: Node A can now send_unicast(NodeB_NodeId, "Hello!") or send_broadcast("General Update!").
 3. Building the Project
@@ -108,7 +110,7 @@ void my_unicast_handler(const NodeId& sender, const std::string& message) {
 
 void my_broadcast_handler(const NodeId& sender, const std::string& message) {
     std::cout << "[App] Broadcast from " << sender.id << " ("
-              << (sender.id == network_ptr->get_local_node_id().id ? "self" : "peer")
+              << (network_ptr && sender.id == network_ptr->get_local_node_id().id ? "self" : "peer")
               << "): " << message << std::endl;
 }
 
@@ -170,37 +172,36 @@ int main(int argc, char* argv[]) {
 
     std::thread input_thread([&]() {
         std::string line;
-        while (app_running) {
+        while (app_running.load()) { // Use .load() for atomic bool
             std::cout << "> ";
             if (!std::getline(std::cin, line)) {
-                if (std::cin.eof()) { // Handle EOF (Ctrl+D)
+                if (std::cin.eof()) { 
                     std::cout << "EOF detected, initiating shutdown..." << std::endl;
-                    app_running = false;
-                    if (network_ptr) network_ptr->stop(); // Ensure network stop is called
+                    if(app_running.load()) app_running = false; // Ensure flag is set
+                    if (network_ptr) network_ptr->stop(); 
                     break;
                 }
-                // Other stream errors, might need a small delay or check app_running
-                if (!app_running) break;
+                if (!app_running.load()) break;
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
             }
 
-            if (line.empty() || !app_running) continue;
+            if (line.empty() || !app_running.load()) continue;
 
             std::istringstream iss(line);
             std::string command;
             iss >> command;
 
-            if (!app_running) break; // Check again after potential block in getline
+            if (!app_running.load()) break; 
 
             if (command == "quit") {
-                app_running = false;
-                if (network_ptr) network_ptr->stop(); // Ensure network stop is called
+                if(app_running.load()) app_running = false;
+                if (network_ptr) network_ptr->stop(); 
                 break;
             } else if (command == "broadcast") {
                 std::string message;
-                std::getline(iss, message); // Read rest of the line
-                if (!message.empty() && message[0] == ' ') message = message.substr(1); // Trim leading space
+                std::getline(iss, message); 
+                if (!message.empty() && message[0] == ' ') message = message.substr(1); 
                 if (!message.empty()) {
                     network.send_broadcast(message);
                     std::cout << "[App] Broadcast '" << message << "' sent." << std::endl;
@@ -240,40 +241,35 @@ int main(int argc, char* argv[]) {
                 std::cout << "[App] Unknown command: " << command << std::endl;
             }
         }
-        // If loop exited due to cin error/eof not covered by app_running=false
-        if (app_running) {
+        if (app_running.load()) { // If loop exited for other reasons (e.g. cin error)
             app_running = false;
             if (network_ptr && network_ptr->is_running()) network_ptr->stop();
         }
         std::cout << "[App] Input thread finished." << std::endl;
     });
 
-    // Keep main thread alive while app is running
-    while(app_running) {
+    while(app_running.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
-    // Ensure network is stopped and input thread is joined
     if (network.is_running()) {
         std::cout << "[App] Main thread initiating final shutdown check..." << std::endl;
-        network.stop(); // This is safe due to internal checks in stop()
+        network.stop(); 
     }
-
-    // Ensure std::cin is unblocked for the input_thread to join if it's stuck on getline
-    // This is a common issue with joining console input threads.
-    // A more robust way might involve closing std::cin or using select/poll on cin.
-    // For this example, if not already shut down by EOF or 'quit', this helps.
-    // Note: This might not be perfectly clean on all OSes if input_thread is deeply blocked.
-    if(input_thread.joinable()){
-        std::cout << "[App] Ensuring input stream is clear for input thread to join..." << std::endl;
-        // The following line is a platform-specific way to potentially unblock std::cin.
-        // It's not guaranteed to work or be the best way.
-        // On POSIX, one might try: close(STDIN_FILENO);
-        // For this example, the signal handler and EOF check are primary shutdown paths for input_thread.
-        // If they worked, input_thread would have already set app_running to false.
-        // If main loop exited first (e.g. external kill not caught by signal), cin might still be blocking.
-        // A robust app might use a condition variable or pipe to signal the input thread.
-    }
+    
+    // Attempt to unblock std::cin for clean thread join, though not foolproof.
+    // The primary shutdown mechanism for input_thread should be app_running flag.
+    // This is more of a fallback.
+    #if defined(_POSIX_VERSION)
+        // On POSIX, one might try more direct methods like closing STDIN_FILENO,
+        // but that's too aggressive for a general example.
+        // Sending a newline can sometimes help if the thread is blocked on getline.
+        // This is not a robust solution for all cases.
+        // std::FILE* p_stdin = stdin;
+        // if (p_stdin && !std::feof(p_stdin) && !std::ferror(p_stdin)) {
+        //    std::ungetc('\n', p_stdin); // Try to push a newline back
+        // }
+    #endif
 
     if(input_thread.joinable()) {
         input_thread.join();
@@ -299,16 +295,16 @@ Running example_app (Example Scenario):
 Compile: (As shown in "Building the Project" section)
 g++ -std=c++11 -Wall -o example_app example_app.cpp mesh_network.cpp -I/usr/local/include -L/usr/local/lib -lzmq -ljsoncpp -pthread
 Terminal 1 (Node A - First node, no seeds):
-./example_app nodeA 127.0.0.1 9001
+./example_app 127.0.0.1 9001
 Node A will start and begin UDP discovery broadcasts.
 Terminal 2 (Node B - Connects to Node A as a seed):
-./example_app nodeB 127.0.0.1 9002 127.0.0.1:9001
+./example_app 127.0.0.1 9002 127.0.0.1:9001
 Node B will start and attempt to connect to Node A. Once connected, they will exchange heartbeats. Node B will also start UDP discovery.
 Terminal 3 (Node C - Relies on UDP discovery or seeds to B):
 # Option 1: Rely on UDP discovery (Node A and B should be broadcasting)
-./example_app nodeC 127.0.0.1 9003
+./example_app 127.0.0.1 9003
 # Option 2: Seed from Node B
-# ./example_app nodeC 127.0.0.1 9003 127.0.0.1:9002
+# ./example_app 127.0.0.1 9003 127.0.0.1:9002
 Node C should discover and connect to the other nodes.
 Now, from any terminal, you can use the commands:
 
@@ -341,7 +337,12 @@ Run the tests:
 ./test_mesh_network
 The test suite executes various scenarios, including unicast/broadcast functionality, peer discovery (both seed-based and UDP if tests were successfully updated), and node failure recovery. Test results are printed to the console.
 
-Note on UDP Discovery Tests: While the core UDP discovery reception logic is implemented in the library, the full enhancement and verification of tests for this specific mechanism within test_mesh_network.cpp were significantly hindered by persistent issues with my file editing capabilities. Therefore, the test coverage for UDP-only discovery scenarios might be limited or may rely on older test structures.
+Note on Enhanced Test Suite (`enhanced_test_suite.cpp`):
+During development, a separate file named `enhanced_test_suite.cpp` was created. This file contains proposals for more rigorous and comprehensive test scenarios, including:
+- Stricter validation of full mesh (N-1 peer) formation under various seeding conditions (standard, minimal/ring, no-seed UDP).
+- Tests for reliable unicast and broadcast messaging under dynamic network conditions (nodes joining and leaving).
+- Conceptual outlines for complex dynamic membership tests and scalability assessments.
+This file was created because persistent tool limitations prevented reliable modification of the original `test_mesh_network.cpp`. It is recommended to review `enhanced_test_suite.cpp` and integrate its valuable test scenarios into the main `test_mesh_network.cpp` to improve overall code quality and validation.
 
 7. Assumptions and Design Decisions
 JSON for Messaging: Chosen for human readability and ease of parsing, suitable for many applications. For high-performance or bandwidth-constrained scenarios, a binary serialization format might be preferred.
@@ -354,8 +355,10 @@ Discovery Scope: UDP broadcast discovery is primarily for LAN environments. Seed
 No Encryption/Security: The library does not implement any message encryption or node authentication. For production use in untrusted environments, security features would need to be added (e.g., using ZMQ's built-in CURVE security or an application-layer solution).
 Error Handling: Errors are generally logged to std::cerr. Production applications would likely require more sophisticated logging and error management.
 8. Known Issues and Limitations
-UDP Discovery Test Coverage: As noted, while the UDP discovery reception logic is now part of the main codebase (mesh_network.h and mesh_network.cpp), my ability to fully update test_mesh_network.cpp to comprehensively test this feature was blocked by persistent failures during this phase of development. The existing tests primarily validate seed-node based discovery and core messaging.
+UDP Discovery Test Coverage: While the UDP discovery reception logic (including reciprocal connection prompting) is implemented in the library, the full enhancement and verification of tests for this specific mechanism within `test_mesh_network.cpp` were significantly hindered by tool limitations during certain development phases. The `enhanced_test_suite.cpp` file contains proposals for more thorough UDP-based discovery tests.
 Scalability of Broadcasts: Broadcast messages are sent individually to each connected peer. This could be inefficient in networks with a very large number of direct peers for a single node.
 Network Partitions: The library does not have advanced mechanisms to detect or automatically heal network partitions.
 Message Guarantees: While TCP provides reliability for direct peer-to-peer links, the library itself does not offer end-to-end guaranteed delivery or complex routing across multiple hops (it primarily facilitates a flat mesh of directly connected peers).
 UDP Reliability: UDP discovery messages are inherently unreliable and can be lost. The periodic nature of these broadcasts and the seed node mechanism are intended to mitigate this for initial discovery.
+
+[end of README.md]
