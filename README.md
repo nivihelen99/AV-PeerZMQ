@@ -185,13 +185,13 @@ int main(int argc, char* argv[]) {
         std::string line;
 
         while (app_running.load()) { // Use .load() for atomic bool
-
             std::cout << "> ";
             if (!std::getline(std::cin, line)) {
                 if (std::cin.eof()) { 
                     std::cout << "EOF detected, initiating shutdown..." << std::endl;
 
                     if(app_running.load()) app_running = false; // Ensure flag is set
+
 
                     if (network_ptr) network_ptr->stop(); 
                     break;
@@ -258,7 +258,6 @@ int main(int argc, char* argv[]) {
         }
 
         if (app_running.load()) { // If loop exited for other reasons (e.g. cin error)
-
             app_running = false;
             if (network_ptr && network_ptr->is_running()) network_ptr->stop();
         }
@@ -276,6 +275,8 @@ int main(int argc, char* argv[]) {
     
 
 
+
+
     // Attempt to unblock std::cin for clean thread join, though not foolproof.
     // The primary shutdown mechanism for input_thread should be app_running flag.
     // This is more of a fallback.
@@ -289,6 +290,7 @@ int main(int argc, char* argv[]) {
         //    std::ungetc('\n', p_stdin); // Try to push a newline back
         // }
     #endif
+
 
 
     if(input_thread.joinable()) {
@@ -311,6 +313,8 @@ Compile:
 make
 ```
 ... (rest of example scenario is fine)
+
+
 =======
 Compile: (As shown in "Building the Project" section)
 g++ -std=c++11 -Wall -o example_app example_app.cpp mesh_network.cpp -I/usr/local/include -L/usr/local/lib -lzmq -ljsoncpp -pthread
@@ -345,6 +349,7 @@ Lightweight Distributed Task Queues: A node can broadcast a task request. Intere
 Sensor Networks / IoT: In a local network, IoT devices or sensors could form a mesh to relay data. For instance, a sensor might broadcast its readings, or a central node could unicast configuration commands to specific sensors.
 
 
+
 6. How to Run the Tests
 The `test_mesh_network.cpp` file provides a test suite.
 
@@ -367,6 +372,23 @@ To clean the build files for the test suite:
 make -f Makefile.tests clean_tests
 ```
 
+
+Note on Enhanced Test Suite (`enhanced_test_suite.cpp`):
+During development, a separate file named `enhanced_test_suite.cpp` was created. This file contains proposals for more rigorous and comprehensive test scenarios, including:
+- Stricter validation of full mesh (N-1 peer) formation under various seeding conditions (standard, minimal/ring, no-seed UDP).
+- Tests for reliable unicast and broadcast messaging under dynamic network conditions (nodes joining and leaving).
+- Conceptual outlines for complex dynamic membership tests and scalability assessments.
+This file was created because persistent tool limitations prevented reliable modification of the original `test_mesh_network.cpp`. It is recommended to review `enhanced_test_suite.cpp` and integrate its valuable test scenarios into the main `test_mesh_network.cpp` to improve overall code quality and validation.
+
+7. Assumptions and Design Decisions
+(This section remains largely unchanged but is contextually supported by the new Prerequisites and Build sections.)
+...
+
+8. Known Issues and Limitations
+(This section remains largely unchanged.)
+...
+=======
+
 Note on Enhanced Test Suite (`enhanced_test_suite.cpp`):
 During development, a separate file named `enhanced_test_suite.cpp` was created. This file contains proposals for more rigorous and comprehensive test scenarios, including:
 - Stricter validation of full mesh (N-1 peer) formation under various seeding conditions (standard, minimal/ring, no-seed UDP).
@@ -388,6 +410,7 @@ Scalability of Broadcasts: Broadcast messages are sent individually to each conn
 Network Partitions: The library does not have advanced mechanisms to detect or automatically heal network partitions.
 Message Guarantees: While TCP provides reliability for direct peer-to-peer links, the library itself does not offer end-to-end guaranteed delivery or complex routing across multiple hops (it primarily facilitates a flat mesh of directly connected peers).
 UDP Reliability: UDP discovery messages are inherently unreliable and can be lost. The periodic nature of these broadcasts and the seed node mechanism are intended to mitigate this for initial discovery.
+
 
 
 [end of README.md]
