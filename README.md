@@ -183,12 +183,16 @@ int main(int argc, char* argv[]) {
 
     std::thread input_thread([&]() {
         std::string line;
-        while (app_running.load()) { 
+
+        while (app_running.load()) { // Use .load() for atomic bool
+
             std::cout << "> ";
             if (!std::getline(std::cin, line)) {
                 if (std::cin.eof()) { 
                     std::cout << "EOF detected, initiating shutdown..." << std::endl;
-                    if(app_running.load()) app_running = false; 
+
+                    if(app_running.load()) app_running = false; // Ensure flag is set
+
                     if (network_ptr) network_ptr->stop(); 
                     break;
                 }
@@ -252,7 +256,9 @@ int main(int argc, char* argv[]) {
                 std::cout << "[App] Unknown command: " << command << std::endl;
             }
         }
-        if (app_running.load()) { 
+
+        if (app_running.load()) { // If loop exited for other reasons (e.g. cin error)
+
             app_running = false;
             if (network_ptr && network_ptr->is_running()) network_ptr->stop();
         }
@@ -268,6 +274,23 @@ int main(int argc, char* argv[]) {
         network.stop(); 
     }
     
+
+
+    // Attempt to unblock std::cin for clean thread join, though not foolproof.
+    // The primary shutdown mechanism for input_thread should be app_running flag.
+    // This is more of a fallback.
+    #if defined(_POSIX_VERSION)
+        // On POSIX, one might try more direct methods like closing STDIN_FILENO,
+        // but that's too aggressive for a general example.
+        // Sending a newline can sometimes help if the thread is blocked on getline.
+        // This is not a robust solution for all cases.
+        // std::FILE* p_stdin = stdin;
+        // if (p_stdin && !std::feof(p_stdin) && !std::ferror(p_stdin)) {
+        //    std::ungetc('\n', p_stdin); // Try to push a newline back
+        // }
+    #endif
+
+
     if(input_thread.joinable()) {
         input_thread.join();
     }
@@ -282,11 +305,45 @@ The `example_app.cpp` included in the repository provides a ready-to-run command
 ...
 Running example_app (Example Scenario):
 
+
 Compile:
 ```bash
 make
 ```
 ... (rest of example scenario is fine)
+=======
+Compile: (As shown in "Building the Project" section)
+g++ -std=c++11 -Wall -o example_app example_app.cpp mesh_network.cpp -I/usr/local/include -L/usr/local/lib -lzmq -ljsoncpp -pthread
+Terminal 1 (Node A - First node, no seeds):
+./example_app 127.0.0.1 9001
+Node A will start and begin UDP discovery broadcasts.
+Terminal 2 (Node B - Connects to Node A as a seed):
+./example_app 127.0.0.1 9002 127.0.0.1:9001
+Node B will start and attempt to connect to Node A. Once connected, they will exchange heartbeats. Node B will also start UDP discovery.
+Terminal 3 (Node C - Relies on UDP discovery or seeds to B):
+# Option 1: Rely on UDP discovery (Node A and B should be broadcasting)
+./example_app 127.0.0.1 9003
+# Option 2: Seed from Node B
+# ./example_app 127.0.0.1 9003 127.0.0.1:9002
+Node C should discover and connect to the other nodes.
+Now, from any terminal, you can use the commands:
+
+peers (to see who you are connected to)
+broadcast Hello everyone!
+unicast 127.0.0.1:9002 Hello Node B from Node A! (if sent from Node A to Node B)
+5. Use Cases
+AV-PeerZMQ can be a foundational library for various decentralized applications:
+
+Decentralized Chat Applications: Nodes can join the mesh, and users can send messages. Broadcasts can be used for public room messages, while unicasts can be used for private messages between users on specific nodes. Each message could be a JSON object containing user, timestamp, and text.
+
+Simple Service Discovery: Nodes can broadcast their available services or capabilities upon joining the network (e.g., "service_name": "image_processing", "status": "available"). Other nodes can listen for these broadcasts to dynamically find and utilize services offered by peers.
+
+Collaborative Data Sharing / Synchronization: For applications where multiple users need to work on shared data (e.g., a collaborative editor, distributed whiteboards), AV-PeerZMQ can propagate changes or updates. A node making a change can broadcast it, and other nodes can update their local state. More complex state synchronization would require additional logic on top.
+
+Lightweight Distributed Task Queues: A node can broadcast a task request. Interested and available nodes can pick up the task, possibly by sending a unicast message back to the requester to claim it. Results can then be sent back via unicast.
+
+Sensor Networks / IoT: In a local network, IoT devices or sensors could form a mesh to relay data. For instance, a sensor might broadcast its readings, or a central node could unicast configuration commands to specific sensors.
+
 
 6. How to Run the Tests
 The `test_mesh_network.cpp` file provides a test suite.
@@ -322,7 +379,15 @@ This file was created because persistent tool limitations prevented reliable mod
 ...
 
 8. Known Issues and Limitations
+
 (This section remains largely unchanged.)
 ...
+
+UDP Discovery Test Coverage: While the UDP discovery reception logic (including reciprocal connection prompting) is implemented in the library, the full enhancement and verification of tests for this specific mechanism within `test_mesh_network.cpp` were significantly hindered by tool limitations during certain development phases. The `enhanced_test_suite.cpp` file contains proposals for more thorough UDP-based discovery tests.
+Scalability of Broadcasts: Broadcast messages are sent individually to each connected peer. This could be inefficient in networks with a very large number of direct peers for a single node.
+Network Partitions: The library does not have advanced mechanisms to detect or automatically heal network partitions.
+Message Guarantees: While TCP provides reliability for direct peer-to-peer links, the library itself does not offer end-to-end guaranteed delivery or complex routing across multiple hops (it primarily facilitates a flat mesh of directly connected peers).
+UDP Reliability: UDP discovery messages are inherently unreliable and can be lost. The periodic nature of these broadcasts and the seed node mechanism are intended to mitigate this for initial discovery.
+
 
 [end of README.md]
