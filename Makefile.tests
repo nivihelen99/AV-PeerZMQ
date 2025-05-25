@@ -1,0 +1,104 @@
+# Makefile.tests for AV-PeerZMQ Project Test Suite
+
+# Variables
+# -----------------------------------------------------------------------------
+CXX ?= g++
+RM ?= rm -f
+PKG_CONFIG ?= pkg-config
+
+TEST_TARGET := test_mesh_network
+LIB_SRCS := mesh_network.cpp
+TEST_SRCS := test_mesh_network.cpp
+
+# Generate object file names
+LIB_OBJS := $(LIB_SRCS:.cpp=.o) # Should be mesh_network.o
+TEST_OBJS := $(TEST_SRCS:.cpp=.o) # Should be test_mesh_network.o
+OBJS := $(LIB_OBJS) $(TEST_OBJS)
+
+# Compiler and Linker Flags
+# -----------------------------------------------------------------------------
+# Base flags
+BASE_CXXFLAGS := -std=c++11 -Wall -pthread -g # Added -g for debugging tests
+BASE_LDFLAGS := -pthread
+BASE_LDLIBS := -pthread # -pthread can also be needed for linking with g++
+
+# Attempt to use pkg-config for ZeroMQ and JsonCpp
+PKG_CONFIG_ZEROMQ_CFLAGS := $(shell $(PKG_CONFIG) --cflags libzmq 2>/dev/null || $(PKG_CONFIG) --cflags zeromq 2>/dev/null)
+PKG_CONFIG_JSONCPP_CFLAGS := $(shell $(PKG_CONFIG) --cflags jsoncpp 2>/dev/null)
+PKG_CONFIG_ZEROMQ_LIBS := $(shell $(PKG_CONFIG) --libs libzmq 2>/dev/null || $(PKG_CONFIG) --libs zeromq 2>/dev/null)
+PKG_CONFIG_JSONCPP_LIBS := $(shell $(PKG_CONFIG) --libs jsoncpp 2>/dev/null)
+
+# Initialize CXXFLAGS and LDFLAGS/LDLIBS
+CXXFLAGS := $(BASE_CXXFLAGS)
+LDFLAGS := $(BASE_LDFLAGS)
+LDLIBS := $(BASE_LDLIBS)
+
+# If pkg-config provided CFLAGS for ZeroMQ, add them
+ifeq ($(strip $(PKG_CONFIG_ZEROMQ_CFLAGS)),)
+    $(info Warning: pkg-config could not find ZeroMQ cflags for tests. Using default include path.)
+    CXXFLAGS += $(INC_PATHS) -I/usr/local/include # INC_PATHS for manual override
+else
+    CXXFLAGS += $(PKG_CONFIG_ZEROMQ_CFLAGS)
+endif
+
+# If pkg-config provided CFLAGS for JsonCpp, add them
+ifeq ($(strip $(PKG_CONFIG_JSONCPP_CFLAGS)),)
+    $(info Warning: pkg-config could not find JsonCpp cflags for tests. Using default include path.)
+    CXXFLAGS += $(INC_PATHS) 
+else
+    CXXFLAGS += $(PKG_CONFIG_JSONCPP_CFLAGS)
+endif
+
+# If pkg-config provided LIBS for ZeroMQ, add them
+ifeq ($(strip $(PKG_CONFIG_ZEROMQ_LIBS)),)
+    $(info Warning: pkg-config could not find ZeroMQ libs for tests. Using default lib path and lib name.)
+    LDFLAGS += $(LIB_PATHS) -L/usr/local/lib # LIB_PATHS for manual override
+    LDLIBS += -lzmq
+else
+    LDFLAGS += $(filter -L%, $(PKG_CONFIG_ZEROMQ_LIBS))
+    LDLIBS += $(filter-out -L%, $(PKG_CONFIG_ZEROMQ_LIBS))
+endif
+
+# If pkg-config provided LIBS for JsonCpp, add them
+ifeq ($(strip $(PKG_CONFIG_JSONCPP_LIBS)),)
+    $(info Warning: pkg-config could not find JsonCpp libs for tests. Using default lib path and lib name.)
+    LDFLAGS += $(LIB_PATHS)
+    LDLIBS += -ljsoncpp
+else
+    LDFLAGS += $(filter -L%, $(PKG_CONFIG_JSONCPP_LIBS))
+    LDLIBS += $(filter-out -L%, $(PKG_CONFIG_JSONCPP_LIBS))
+endif
+
+# Targets
+# -----------------------------------------------------------------------------
+.PHONY: build_tests clean_tests
+
+# Default target
+build_tests: $(TEST_TARGET)
+
+# Rule to link the test executable
+$(TEST_TARGET): $(OBJS)
+	@echo "Linking test target: $@"
+	$(CXX) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+
+# Explicit rules for object file compilation (as per requirement examples)
+# These will recompile mesh_network.o for the tests, ensuring independence.
+$(LIB_OBJS): $(LIB_SRCS) mesh_network.h
+	@echo "Compiling library source for tests: $<"
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_OBJS): $(TEST_SRCS) mesh_network.h
+	@echo "Compiling test source: $<"
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Clean target for tests
+clean_tests:
+	@echo "Cleaning test objects and target..."
+	$(RM) $(TEST_TARGET) $(OBJS)
+	@echo "Test clean complete."
+
+# Informative echo (optional for debugging Makefile)
+# $(info Using CXXFLAGS for tests: $(CXXFLAGS))
+# $(info Using LDFLAGS for tests: $(LDFLAGS))
+# $(info Using LDLIBS for tests: $(LDLIBS))
+# $(info Test OBJS: $(OBJS))
