@@ -1,107 +1,228 @@
+````markdown
 # AV-PeerZMQ
-AV-PeerZMQ: Peer-to-Peer Mesh Networking Library
-1. Project Overview
-AV-PeerZMQ is a C++ library designed for building decentralized, peer-to-peer (P2P) mesh networks. It leverages ZeroMQ for asynchronous messaging and JSONCpp for message serialization. The library enables nodes to discover each other, send unicast and broadcast messages, and maintain a resilient network topology.
 
-Key Features:
+Peer-to-Peer Mesh Networking Library
 
-Dynamic Peer Discovery:
-Seed Nodes: Nodes can be bootstrapped by connecting to a list of known seed nodes. This provides a reliable way to join an existing mesh.
-UDP Broadcast Discovery: Nodes can discover each other on the local network (LAN) via UDP broadcasts. This allows for zero-configuration setups in LAN environments. The mechanism is designed to be reciprocal: upon discovering a peer via UDP, a node will connect and also prompt the discovered peer to connect back and exchange peer lists, fostering faster full mesh formation.
-Messaging:
-Unicast: Send targeted messages directly to a specific peer.
-Broadcast: Propagate messages to all directly connected peers in the mesh.
-Peer Management: Includes automatic heartbeating to monitor peer health, timeout detection for unresponsive peers, and dynamic connection management.
-Callbacks: Provides an easy way for applications to react to network events by setting callbacks for received unicast and broadcast messages.
-Resilience: The network is designed to handle nodes joining and leaving dynamically, with peers attempting to reconnect or find new peers if connections are lost.
-Cross-Platform (Potentially): Built with standard C++ and common libraries like ZeroMQ and JsonCpp, making it potentially portable across different operating systems.
-2. Architecture and Component Descriptions
-The library revolves around a few core components:
+---
 
-MeshNetwork Class: This is the central class and the primary interface for applications. It encapsulates all networking logic, including peer discovery, message handling, and connection management.
-ZeroMQ Sockets:
-router_socket_ (ZMQ_ROUTER type): A TCP socket that listens on the node's main IP address and port. It's used for reliable, ordered communication with connected peers. This includes sending/receiving unicast messages, application-level broadcasts, heartbeats, and peer lists. The ROUTER socket allows multiple peers to connect to it.
-discovery_socket_ (ZMQ_DGRAM type): A UDP socket bound to a specific discovery port (typically local_port + 1000 by default, but configurable). This socket is used for sending out UDP broadcast messages for local peer discovery and for receiving such broadcasts from other nodes.
-Threads: MeshNetwork employs several background threads for concurrent operations:
-message_handler_thread_: Polls both the router_socket_ (for TCP messages) and the discovery_socket_ (for UDP discovery broadcasts). Received messages are dispatched to appropriate internal handlers (e.g., handle_message for TCP, handle_discovery_message for UDP).
-heartbeat_thread_: Periodically sends heartbeat messages to all currently connected peers to signal presence and maintain active connections.
-discovery_thread_: Periodically attempts to connect to any configured seed nodes. It also triggers the UDP broadcast of discovery messages on the local network.
-cleanup_thread_: Periodically checks for peers that have not sent a heartbeat within the timeout period and disconnects them.
-NodeId Struct: A simple structure representing a unique node in the network. It contains the node's IP address (std::string ip), port (uint16_t port), and a concatenated string ID (std::string id in "ip:port" format) for easy identification and use in hash maps.
-PeerInfo Struct: Stores runtime information about each connected peer. This includes the peer's NodeId, the timestamp of the last message received (last_seen), its connection status (is_connected), and a std::unique_ptr<zmq::socket_t> which is a ZMQ_DEALER socket used to send messages directly to that peer.
-Message Types (Internal Protocol): An enum class MessageType defines the types of messages exchanged internally by MeshNetwork nodes:
-HEARTBEAT: Indicates a node is still alive.
-PEER_DISCOVERY: Used in UDP broadcasts to announce presence, or sent over TCP to request a list of known peers from an already connected peer, or sent back to a UDP-discovered peer to prompt reciprocal connection.
-UNICAST: An application-level message intended for a single target node.
-BROADCAST: An application-level message to be disseminated to all connected peers.
-PEER_LIST: A response to a PEER_DISCOVERY (TCP) request, containing a list of other peers known to the sender. This helps in transitive discovery.
-GOODBYE: A message sent by a node when it is shutting down gracefully.
-Message Format: All messages are JSON objects, serialized to strings for transmission. Each message typically includes:
-"type": An integer corresponding to one of the MessageType enum values.
-"data": A JSON object containing the payload. Common fields within data include:
-"sender": The NodeId.id string of the originating node.
-"timestamp": Message creation time.
-Specific fields based on message type (e.g., "message" for UNICAST/BROADCAST, "peers" array for PEER_LIST).
-Communication Flow Example (Simplified):
+## 1. Project Overview
 
-Node A Starts: Binds its TCP router socket and UDP discovery socket. Starts its background threads. If no seeds, it relies on UDP.
-Node A Discovery Broadcast: Periodically, Node A's discovery_thread_ sends a PEER_DISCOVERY message via UDP broadcast. This message contains Node A's NodeId (IP and main listening port).
-Node B Starts: Similarly binds sockets and starts threads.
-Node B Receives UDP Discovery: Node B's message_handler_thread_ (polling the discovery_socket_) receives Node A's UDP broadcast. The handle_discovery_message function parses it.
-Node B Connects to Node A and Prompts Back:
-Node B calls `connect_to_peer(NodeA_NodeId)`. This creates a ZMQ_DEALER socket on Node B that connects to Node A's ZMQ_ROUTER socket (TCP).
-Node B then sends a `PEER_DISCOVERY` message (over TCP) back to Node A. This prompts Node A to also call `connect_to_peer(NodeB_NodeId)` (if not already attempting) and to send its own peer list to Node B, ensuring a more robust and reciprocal connection establishment.
-Peer List Exchange: Nodes exchange `PEER_LIST` messages (typically in response to TCP `PEER_DISCOVERY` messages) to learn about other peers transitively, helping to build a comprehensive view of the mesh.
-Heartbeating: Node A and Node B now periodically send HEARTBEAT messages to each other over their TCP link.
-Application Messaging: Node A can now send_unicast(NodeB_NodeId, "Hello!") or send_broadcast("General Update!").
+**AV-PeerZMQ** is a C++ library for building decentralized, peer-to-peer (P2P) mesh networks. It leverages ZeroMQ for asynchronous messaging and JsonCpp for message serialization. The library enables:
 
-3. Prerequisites
-Before building the project, ensure you have the following prerequisites installed:
+- **Dynamic Peer Discovery**
+  - **Seed Nodes**: Bootstrap by connecting to a list of known seed nodes.
+  - **UDP Broadcast Discovery**: Discover peers on the local network via UDP broadcasts. When a new peer is found via UDP, both nodes exchange peer lists to accelerate full-mesh formation.
 
-C++ Compiler: A compiler with support for C++11 features (e.g., GCC 4.8+, Clang 3.3+).
-Make Utility: The `make` build automation tool.
-ZeroMQ Development Libraries: Version 4.x.x or higher is recommended.
-  - Debian/Ubuntu: `sudo apt-get install libzmq3-dev`
-  - Fedora: `sudo dnf install zeromq-devel`
-  - macOS (Homebrew): `brew install zeromq`
-JsonCpp Development Libraries: Version 1.x.x is typical.
-  - Debian/Ubuntu: `sudo apt-get install libjsoncpp-dev`
-  - Fedora: `sudo dnf install jsoncpp-devel`
-  - macOS (Homebrew): `brew install jsoncpp`
-pkg-config Utility: Used by the Makefiles to find library paths and flags.
-  - Debian/Ubuntu: `sudo apt-get install pkg-config`
-  - Fedora: `sudo dnf install pkgconfig`
-  - macOS (Homebrew): `brew install pkg-config`
+- **Messaging**
+  - **Unicast**: Send targeted messages to a specific peer.
+  - **Broadcast**: Propagate messages to all directly connected peers.
+  - **Peer Management**: Automatic heartbeating, timeout detection, and dynamic connection management.
+  - **Callbacks**: Application-level callbacks for received unicast or broadcast messages.
 
-Note on Library Paths: The Makefiles use `pkg-config` to automatically detect ZeroMQ and JsonCpp. If these libraries are installed in custom locations not known to `pkg-config`, you may need to set the `PKG_CONFIG_PATH` environment variable. For example:
-`export PKG_CONFIG_PATH=/custom/lib/path/pkgconfig:$PKG_CONFIG_PATH`
-Alternatively, you can override include and library paths directly when running make:
-`make INC_PATHS="-I/custom/zeromq/include -I/custom/jsoncpp/include" LIB_PATHS="-L/custom/zeromq/lib -L/custom/jsoncpp/lib"`
+- **Resilience**
+  - Handles nodes joining and leaving dynamically.
+  - Peers attempt to reconnect or discover alternative peers if connections fail.
 
-4. Building the Project
-This project uses Makefiles to manage the compilation process:
-- `Makefile`: Used for building the main example application (`example_app`).
-- `Makefile.tests`: Used for building the test suite (`test_mesh_network`).
+- **Cross-Platform Potential**
+  - Built with standard C++, ZeroMQ, and JsonCpp, making it portable across major operating systems.
 
-Building the Example Application (`example_app`):
-To build the `example_app` executable, navigate to the project's root directory and run:
-```bash
-make
-```
-This command compiles `mesh_network.cpp` (the library) and `example_app.cpp`, then links them to create the `example_app` executable in the root directory.
-To clean the build files for the example application:
-```bash
-make clean
+---
+
+## 2. Architecture & Components
+
+### 2.1 Core Classes and Structures
+
+#### `MeshNetwork`
+
+The primary interface for applications. It encapsulates:
+
+- **Peer Discovery** (via UDP and TCP).
+- **Message Handling** (unicast, broadcast, heartbeats, peer lists).
+- **Connection Management**.
+
+#### `NodeId`
+
+A struct representing a unique node:
+
+```cpp
+struct NodeId {
+    std::string ip;
+    uint16_t port;
+    std::string id; // "ip:port"
+};
+````
+
+#### `PeerInfo`
+
+Holds runtime information for each connected peer:
+
+```cpp
+struct PeerInfo {
+    NodeId               node_id;
+    std::chrono::steady_clock::time_point last_seen;
+    bool                 is_connected;
+    std::unique_ptr<zmq::socket_t> dealer_socket; // ZMQ_DEALER for sending messages
+};
 ```
 
-5. Usage Instructions & Detailed Examples
-Integrating the Library
-To use MeshNetwork in your application:
+### 2.2 ZeroMQ Sockets
 
-Include mesh_network.h.
-Compile mesh_network.cpp and link it with your application, along with ZeroMQ and JsonCpp libraries. The provided `Makefile` handles this for the `example_app`.
-Core Usage Pattern
-(The C++ example code for `main()` in `example_app.cpp` remains unchanged here, as it demonstrates library usage, not the build process itself.)
+* **`router_socket_` (ZMQ\_ROUTER)**
+
+  * Binds to the node’s main IP and port over TCP.
+  * Handles reliable, ordered communication: unicast, broadcast, heartbeats, and peer-list exchanges.
+
+* **`discovery_socket_` (ZMQ\_DGRAM)**
+
+  * Binds to a UDP port (default: `local_port + 1000`).
+  * Sends and receives peer-discovery broadcasts on the LAN.
+
+### 2.3 Internal Threads
+
+* **`message_handler_thread_`**
+
+  * Polls both `router_socket_` (TCP) and `discovery_socket_` (UDP).
+  * Dispatches incoming messages to `handle_message()` or `handle_discovery_message()`.
+
+* **`heartbeat_thread_`**
+
+  * Periodically sends heartbeat messages to all connected peers.
+
+* **`discovery_thread_`**
+
+  * Periodically attempts to connect to configured seed nodes over TCP.
+  * Broadcasts peer-discovery messages via UDP.
+
+* **`cleanup_thread_`**
+
+  * Periodically scans for peers that have not sent a heartbeat within the timeout period and disconnects them.
+
+### 2.4 Message Types (Internal Protocol)
+
+All messages are JSON objects with at least:
+
+* `"type"`: Integer matching one of the `MessageType` enum values.
+* `"data"`: Payload object containing:
+
+  * `"sender"`: Originating node’s `NodeId.id`.
+  * `"timestamp"`: Creation time.
+  * Type-specific fields.
+
+```cpp
+enum class MessageType {
+    HEARTBEAT     = 0,
+    PEER_DISCOVERY = 1, // used in UDP broadcasts or TCP requests for peer lists
+    UNICAST       = 2,  // application-level unicast
+    BROADCAST     = 3,  // application-level broadcast
+    PEER_LIST     = 4,  // response to TCP PEER_DISCOVERY, contains an array of peers
+    GOODBYE       = 5   // graceful node shutdown notification
+};
+```
+
+---
+
+## 3. Prerequisites
+
+Before building AV-PeerZMQ, install the following:
+
+1. **C++ Compiler**
+
+   * GCC (≥ 4.8) or Clang (≥ 3.3) with C++11 support.
+
+2. **Make Utility**
+
+   * `sudo apt-get install make` (Debian/Ubuntu)
+   * `sudo dnf install make` (Fedora)
+   * `brew install make` (macOS)
+
+3. **ZeroMQ Development Libraries (≥ 4.x.x)**
+
+   * Debian/Ubuntu: `sudo apt-get install libzmq3-dev`
+   * Fedora: `sudo dnf install zeromq-devel`
+   * macOS (Homebrew): `brew install zeromq`
+
+4. **JsonCpp Development Libraries (≥ 1.x.x)**
+
+   * Debian/Ubuntu: `sudo apt-get install libjsoncpp-dev`
+   * Fedora: `sudo dnf install jsoncpp-devel`
+   * macOS (Homebrew): `brew install jsoncpp`
+
+5. **pkg-config Utility**
+
+   * Debian/Ubuntu: `sudo apt-get install pkg-config`
+   * Fedora: `sudo dnf install pkgconfig`
+   * macOS (Homebrew): `brew install pkg-config`
+
+> *If ZeroMQ or JsonCpp are installed in custom locations not managed by `pkg-config`, set the `PKG_CONFIG_PATH` environment variable or pass `INC_PATHS` and `LIB_PATHS` to `make`.*
+
+---
+
+## 4. Building the Project
+
+AV-PeerZMQ includes two Makefiles:
+
+* **`Makefile`**: Builds the example application (`example_app`).
+* **`Makefile.tests`**: Builds the test suite (`test_mesh_network`).
+
+### 4.1 Example Application (`example_app`)
+
+1. **Build**
+
+   ```bash
+   make
+   ```
+
+   * Compiles `mesh_network.cpp` and `example_app.cpp`.
+   * Links against ZeroMQ, JsonCpp, and pthread.
+   * Produces `example_app` in the project root.
+
+2. **Clean**
+
+   ```bash
+   make clean
+   ```
+
+3. **Manual Compile Command** (if not using `make`)
+
+   ```bash
+   g++ -std=c++11 -Wall -o example_app example_app.cpp mesh_network.cpp \
+       -I/usr/local/include -L/usr/local/lib -lzmq -ljsoncpp -pthread
+   ```
+
+### 4.2 Test Suite (`test_mesh_network`)
+
+1. **Build**
+
+   ```bash
+   make -f Makefile.tests build_tests
+   ```
+
+   or simply:
+
+   ```bash
+   make -f Makefile.tests
+   ```
+
+   * Compiles `mesh_network.cpp` and `test_mesh_network.cpp`.
+   * Produces `test_mesh_network`.
+
+2. **Clean**
+
+   ```bash
+   make -f Makefile.tests clean_tests
+   ```
+
+---
+
+## 5. Usage Instructions & Examples
+
+### 5.1 Integrating the Library
+
+1. Include `mesh_network.h` in your C++ application.
+2. Compile and link `mesh_network.cpp` with your application. The `Makefile` handles this for `example_app`.
+
+### 5.2 `example_app` Command-Line Interface
+
 ```cpp
 #include "mesh_network.h"
 #include <iostream>
@@ -109,308 +230,352 @@ Core Usage Pattern
 #include <vector>
 #include <thread>
 #include <chrono>
-#include <csignal> // For signal handling
+#include <csignal>
+#include <atomic>
 
-// Global pointer to control the main loop and ensure cleanup
-std::atomic<bool> app_running(true);
-MeshNetwork* network_ptr = nullptr;
+// Global control
+static std::atomic<bool> app_running(true);
+static MeshNetwork* network_ptr = nullptr;
 
-void signal_handler_main(int signum) {
-    std::cout << "\nCaught signal " << signum << ". Shutting down..." << std::endl;
+// Signal handler for graceful shutdown
+void signal_handler(int signum) {
+    std::cout << "\nCaught signal " << signum << ". Shutting down...\n";
     app_running = false;
     if (network_ptr) {
-        network_ptr->stop(); // Attempt graceful shutdown of network
+        network_ptr->stop();
     }
 }
 
-// --- Application-specific Callbacks ---
-void my_unicast_handler(const NodeId& sender, const std::string& message) {
-    std::cout << "[App] Unicast from " << sender.id << ": " << message << std::endl;
+// Application callbacks
+void unicast_handler(const NodeId& sender, const std::string& message) {
+    std::cout << "[App] Unicast from " << sender.id << ": " << message << "\n";
 }
 
-void my_broadcast_handler(const NodeId& sender, const std::string& message) {
-    std::cout << "[App] Broadcast from " << sender.id << " ("
-              << (network_ptr && sender.id == network_ptr->get_local_node_id().id ? "self" : "peer")
-              << "): " << message << std::endl;
+void broadcast_handler(const NodeId& sender, const std::string& message) {
+    bool is_self = (network_ptr && sender.id == network_ptr->get_local_node_id().id);
+    std::cout << "[App] Broadcast from " << sender.id << (is_self ? " (self)" : "") 
+              << ": " << message << "\n";
 }
-
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <local_ip> <local_port> [seed_ip1:port1 seed_ip2:port2 ...]" << std::endl;
-        std::cerr << "Example: ./example_app 127.0.0.1 9001" << std::endl;
-        std::cerr << "Example with seeds: ./example_app 127.0.0.1 9002 127.0.0.1:9001" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <local_ip> <local_port> [seed_ip1:port1 ...]\n";
         return 1;
     }
 
-    std::string local_ip = argv[1];
-    uint16_t local_port = static_cast<uint16_t>(std::stoi(argv[2]));
-
+    std::string local_ip   = argv[1];
+    uint16_t local_port    = static_cast<uint16_t>(std::stoi(argv[2]));
     MeshNetwork network(local_ip, local_port);
-    network_ptr = &network; 
+    network_ptr = &network;
 
-    network.set_unicast_callback(my_unicast_handler);
-    network.set_broadcast_callback(my_broadcast_handler);
+    // Register callbacks
+    network.set_unicast_callback(unicast_handler);
+    network.set_broadcast_callback(broadcast_handler);
 
+    // Add seed nodes (if provided)
     for (int i = 3; i < argc; ++i) {
         std::string seed_address = argv[i];
-        size_t colon_pos = seed_address.find(':');
+        auto colon_pos = seed_address.find(':');
         if (colon_pos != std::string::npos) {
-            std::string seed_ip = seed_address.substr(0, colon_pos);
-            uint16_t seed_port = static_cast<uint16_t>(std::stoi(seed_address.substr(colon_pos + 1)));
-            if (seed_ip != local_ip || seed_port != local_port) { 
-                 network.add_seed_node(seed_ip, seed_port);
-                 std::cout << "[App] Added seed node: " << seed_ip << ":" << seed_port << std::endl;
+            std::string seed_ip   = seed_address.substr(0, colon_pos);
+            uint16_t seed_port    = static_cast<uint16_t>(
+                                        std::stoi(seed_address.substr(colon_pos + 1))
+                                     );
+            if (seed_ip != local_ip || seed_port != local_port) {
+                network.add_seed_node(seed_ip, seed_port);
+                std::cout << "[App] Added seed node: " 
+                          << seed_ip << ":" << seed_port << "\n";
             }
         }
     }
 
+    // Start the mesh network
     if (!network.start()) {
-        std::cerr << "[App] Failed to start mesh network." << std::endl;
+        std::cerr << "[App] Failed to start mesh network.\n";
         return 1;
     }
-    std::cout << "[App] Mesh network started on " << network.get_local_node_id().id << std::endl;
+    std::cout << "[App] Mesh network started on " 
+              << network.get_local_node_id().id << "\n";
 
-    signal(SIGINT, signal_handler_main);
-    signal(SIGTERM, signal_handler_main);
+    // Register OS signals
+    std::signal(SIGINT, signal_handler);
+    std::signal(SIGTERM, signal_handler);
 
-    std::cout << "\nAV-PeerZMQ Example CLI Running. Commands:" << std::endl;
-    std::cout << "  broadcast <message>     - Send broadcast" << std::endl;
-    std::cout << "  unicast <ip:port> <msg> - Send unicast" << std::endl;
-    std::cout << "  peers                   - List connected peers" << std::endl;
-    std::cout << "  quit                    - Exit application" << std::endl;
-    std::cout << "---------------------------------------------" << std::endl;
+    std::cout << "\nCommands:\n"
+              << "  broadcast <message>      Send broadcast to all peers\n"
+              << "  unicast <ip:port> <msg>  Send unicast to a specific peer\n"
+              << "  peers                     List connected peers\n"
+              << "  quit                      Exit application\n"
+              << "---------------------------------------------\n";
 
+    // Input thread for interactive commands
     std::thread input_thread([&]() {
         std::string line;
-
-        while (app_running.load()) { // Use .load() for atomic bool
+        while (app_running.load()) {
             std::cout << "> ";
             if (!std::getline(std::cin, line)) {
-                if (std::cin.eof()) { 
-                    std::cout << "EOF detected, initiating shutdown..." << std::endl;
-
-                    if(app_running.load()) app_running = false; // Ensure flag is set
-
-
-                    if (network_ptr) network_ptr->stop(); 
+                if (std::cin.eof()) {
+                    std::cout << "EOF detected, shutting down...\n";
+                    app_running = false;
+                    if (network_ptr) network_ptr->stop();
                     break;
                 }
-                if (!app_running.load()) break;
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
             }
 
-            if (line.empty() || !app_running.load()) continue;
+            if (line.empty()) continue;
 
             std::istringstream iss(line);
             std::string command;
             iss >> command;
 
-            if (!app_running.load()) break; 
+            if (!app_running.load()) break;
 
             if (command == "quit") {
-                if(app_running.load()) app_running = false;
-                if (network_ptr) network_ptr->stop(); 
+                app_running = false;
+                if (network_ptr) network_ptr->stop();
                 break;
-            } else if (command == "broadcast") {
+            }
+            else if (command == "broadcast") {
                 std::string message;
-                std::getline(iss, message); 
-                if (!message.empty() && message[0] == ' ') message = message.substr(1); 
+                std::getline(iss, message);
+                if (!message.empty() && message.front() == ' ')
+                    message.erase(0, 1);
+
                 if (!message.empty()) {
                     network.send_broadcast(message);
-                    std::cout << "[App] Broadcast '" << message << "' sent." << std::endl;
+                    std::cout << "[App] Broadcast '" << message << "' sent.\n";
                 } else {
-                    std::cout << "[App] Broadcast message cannot be empty." << std::endl;
+                    std::cout << "[App] Broadcast message cannot be empty.\n";
                 }
-            } else if (command == "unicast") {
+            }
+            else if (command == "unicast") {
                 std::string target_str, message_part;
                 iss >> target_str;
                 std::getline(iss, message_part);
-                if (!message_part.empty() && message_part[0] == ' ') message_part = message_part.substr(1);
+                if (!message_part.empty() && message_part.front() == ' ')
+                    message_part.erase(0, 1);
 
-                size_t colon_pos = target_str.find(':');
+                auto colon_pos = target_str.find(':');
                 if (colon_pos != std::string::npos && !message_part.empty()) {
-                    std::string target_ip = target_str.substr(0, colon_pos);
-                    uint16_t target_port = static_cast<uint16_t>(std::stoi(target_str.substr(colon_pos + 1)));
+                    std::string target_ip   = target_str.substr(0, colon_pos);
+                    uint16_t    target_port = static_cast<uint16_t>(
+                                                    std::stoi(target_str.substr(colon_pos + 1))
+                                                );
                     NodeId target_node(target_ip, target_port);
                     if (network.send_unicast(target_node, message_part)) {
-                         std::cout << "[App] Unicast to " << target_node.id << " sent." << std::endl;
+                        std::cout << "[App] Unicast to " 
+                                  << target_node.id << " sent.\n";
                     } else {
-                         std::cout << "[App] Failed to send unicast to " << target_node.id << " (peer not connected or unknown)." << std::endl;
+                        std::cout << "[App] Failed to send unicast to " 
+                                  << target_node.id << ". Peer not connected.\n";
                     }
                 } else {
-                    std::cout << "[App] Invalid unicast format. Use: unicast ip:port message" << std::endl;
+                    std::cout << "[App] Invalid unicast format. "
+                                 "Use: unicast ip:port message\n";
                 }
-            } else if (command == "peers") {
+            }
+            else if (command == "peers") {
                 auto current_peers = network.get_connected_peers();
-                std::cout << "[App] Connected peers (" << current_peers.size() << "):" << std::endl;
+                std::cout << "[App] Connected peers (" 
+                          << current_peers.size() << "):\n";
                 if (current_peers.empty()) {
-                    std::cout << "  (No peers connected)" << std::endl;
+                    std::cout << "  (No peers connected)\n";
                 } else {
                     for (const auto& peer : current_peers) {
-                        std::cout << "  - " << peer.id << std::endl;
+                        std::cout << "  - " << peer.id << "\n";
                     }
                 }
-            } else {
-                std::cout << "[App] Unknown command: " << command << std::endl;
+            }
+            else {
+                std::cout << "[App] Unknown command: " << command << "\n";
             }
         }
-
-        if (app_running.load()) { // If loop exited for other reasons (e.g. cin error)
-            app_running = false;
-            if (network_ptr && network_ptr->is_running()) network_ptr->stop();
-        }
-        std::cout << "[App] Input thread finished." << std::endl;
     });
 
-    while(app_running.load()) {
+    // Main loop
+    while (app_running.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
+    // Ensure network is stopped
     if (network.is_running()) {
-        std::cout << "[App] Main thread initiating final shutdown check..." << std::endl;
-        network.stop(); 
+        network.stop();
     }
-    
 
-
-
-
-    // Attempt to unblock std::cin for clean thread join, though not foolproof.
-    // The primary shutdown mechanism for input_thread should be app_running flag.
-    // This is more of a fallback.
-    #if defined(_POSIX_VERSION)
-        // On POSIX, one might try more direct methods like closing STDIN_FILENO,
-        // but that's too aggressive for a general example.
-        // Sending a newline can sometimes help if the thread is blocked on getline.
-        // This is not a robust solution for all cases.
-        // std::FILE* p_stdin = stdin;
-        // if (p_stdin && !std::feof(p_stdin) && !std::ferror(p_stdin)) {
-        //    std::ungetc('\n', p_stdin); // Try to push a newline back
-        // }
-    #endif
-
-
-
-    if(input_thread.joinable()) {
+    // Join input thread
+    if (input_thread.joinable()) {
         input_thread.join();
     }
 
-    std::cout << "[App] Network stopped. Application terminated." << std::endl;
+    std::cout << "[App] Network stopped. Exiting.\n";
     return 0;
 }
 ```
-example_app.cpp (Explanation)
-(The explanation for `example_app.cpp` remains the same but the "Compile" step within this explanation should be updated if it previously showed manual commands.)
-The `example_app.cpp` included in the repository provides a ready-to-run command-line application that uses the MeshNetwork library.
-...
-Running example_app (Example Scenario):
 
+---
 
-Compile:
-```bash
-make
+## 6. Running the Example
+
+### 6.1 Start Three Nodes on localhost
+
+* **Node A (no seeds)**
+
+  ```bash
+  ./example_app 127.0.0.1 9001
+  ```
+
+  * Node A will bind to `127.0.0.1:9001` and start UDP discovery.
+
+* **Node B (seed = Node A)**
+
+  ```bash
+  ./example_app 127.0.0.1 9002 127.0.0.1:9001
+  ```
+
+  * Node B connects to Node A over TCP and also broadcasts via UDP.
+
+* **Node C (rely on UDP discovery or seed = Node B)**
+
+  ```bash
+  ./example_app 127.0.0.1 9003
+  ```
+
+  *or*
+
+  ```bash
+  ./example_app 127.0.0.1 9003 127.0.0.1:9002
+  ```
+
+### 6.2 Sample Commands (from any node)
+
 ```
-... (rest of example scenario is fine)
+> peers
+[App] Connected peers (2):
+  - 127.0.0.1:9001
+  - 127.0.0.1:9002
 
+> broadcast Hello everyone!
+[App] Broadcast 'Hello everyone!' sent.
 
-=======
-Compile: (As shown in "Building the Project" section)
-g++ -std=c++11 -Wall -o example_app example_app.cpp mesh_network.cpp -I/usr/local/include -L/usr/local/lib -lzmq -ljsoncpp -pthread
-Terminal 1 (Node A - First node, no seeds):
-./example_app 127.0.0.1 9001
-Node A will start and begin UDP discovery broadcasts.
-Terminal 2 (Node B - Connects to Node A as a seed):
-./example_app 127.0.0.1 9002 127.0.0.1:9001
-Node B will start and attempt to connect to Node A. Once connected, they will exchange heartbeats. Node B will also start UDP discovery.
-Terminal 3 (Node C - Relies on UDP discovery or seeds to B):
-# Option 1: Rely on UDP discovery (Node A and B should be broadcasting)
-./example_app 127.0.0.1 9003
-# Option 2: Seed from Node B
-# ./example_app 127.0.0.1 9003 127.0.0.1:9002
-Node C should discover and connect to the other nodes.
-Now, from any terminal, you can use the commands:
+> unicast 127.0.0.1:9002 Hello Node B from Node A!
+[App] Unicast to 127.0.0.1:9002 sent.
 
-peers (to see who you are connected to)
-broadcast Hello everyone!
-unicast 127.0.0.1:9002 Hello Node B from Node A! (if sent from Node A to Node B)
-5. Use Cases
-AV-PeerZMQ can be a foundational library for various decentralized applications:
-
-Decentralized Chat Applications: Nodes can join the mesh, and users can send messages. Broadcasts can be used for public room messages, while unicasts can be used for private messages between users on specific nodes. Each message could be a JSON object containing user, timestamp, and text.
-
-Simple Service Discovery: Nodes can broadcast their available services or capabilities upon joining the network (e.g., "service_name": "image_processing", "status": "available"). Other nodes can listen for these broadcasts to dynamically find and utilize services offered by peers.
-
-Collaborative Data Sharing / Synchronization: For applications where multiple users need to work on shared data (e.g., a collaborative editor, distributed whiteboards), AV-PeerZMQ can propagate changes or updates. A node making a change can broadcast it, and other nodes can update their local state. More complex state synchronization would require additional logic on top.
-
-Lightweight Distributed Task Queues: A node can broadcast a task request. Interested and available nodes can pick up the task, possibly by sending a unicast message back to the requester to claim it. Results can then be sent back via unicast.
-
-Sensor Networks / IoT: In a local network, IoT devices or sensors could form a mesh to relay data. For instance, a sensor might broadcast its readings, or a central node could unicast configuration commands to specific sensors.
-
-
-
-6. How to Run the Tests
-The `test_mesh_network.cpp` file provides a test suite.
-
-Building and Running the Test Suite:
-To build the `test_mesh_network` executable, navigate to the project's root directory and run:
-```bash
-make -f Makefile.tests build_tests
-```
-Or simply `make -f Makefile.tests` as `build_tests` is the default target in `Makefile.tests`.
-This command compiles `mesh_network.cpp` and `test_mesh_network.cpp`, then links them to create the `test_mesh_network` executable.
-
-To run the compiled tests:
-```bash
-./test_mesh_network
-```
-The test suite executes various scenarios, including unicast/broadcast functionality, peer discovery, and node failure recovery. Test results are printed to the console.
-
-To clean the build files for the test suite:
-```bash
-make -f Makefile.tests clean_tests
+> quit
+[App] Network stopped. Exiting.
 ```
 
+---
 
-Note on Enhanced Test Suite (`enhanced_test_suite.cpp`):
-During development, a separate file named `enhanced_test_suite.cpp` was created. This file contains proposals for more rigorous and comprehensive test scenarios, including:
-- Stricter validation of full mesh (N-1 peer) formation under various seeding conditions (standard, minimal/ring, no-seed UDP).
-- Tests for reliable unicast and broadcast messaging under dynamic network conditions (nodes joining and leaving).
-- Conceptual outlines for complex dynamic membership tests and scalability assessments.
-This file was created because persistent tool limitations prevented reliable modification of the original `test_mesh_network.cpp`. It is recommended to review `enhanced_test_suite.cpp` and integrate its valuable test scenarios into the main `test_mesh_network.cpp` to improve overall code quality and validation.
+## 7. Use Cases
 
-7. Assumptions and Design Decisions
-(This section remains largely unchanged but is contextually supported by the new Prerequisites and Build sections.)
-...
+1. **Decentralized Chat**
 
-8. Known Issues and Limitations
-(This section remains largely unchanged.)
-...
-=======
+   * Each node represents a chat client.
+   * Use broadcast for public messages, unicast for private messages.
 
-Note on Enhanced Test Suite (`enhanced_test_suite.cpp`):
-During development, a separate file named `enhanced_test_suite.cpp` was created. This file contains proposals for more rigorous and comprehensive test scenarios, including:
-- Stricter validation of full mesh (N-1 peer) formation under various seeding conditions (standard, minimal/ring, no-seed UDP).
-- Tests for reliable unicast and broadcast messaging under dynamic network conditions (nodes joining and leaving).
-- Conceptual outlines for complex dynamic membership tests and scalability assessments.
-This file was created because persistent tool limitations prevented reliable modification of the original `test_mesh_network.cpp`. It is recommended to review `enhanced_test_suite.cpp` and integrate its valuable test scenarios into the main `test_mesh_network.cpp` to improve overall code quality and validation.
+2. **Service Discovery**
 
-7. Assumptions and Design Decisions
-(This section remains largely unchanged but is contextually supported by the new Prerequisites and Build sections.)
-...
+   * Nodes announce available services (e.g., `"service": "image_processing"`).
+   * Other nodes pick up and use these services dynamically.
 
-8. Known Issues and Limitations
+3. **Collaborative Data Sharing**
 
-(This section remains largely unchanged.)
-...
+   * A collaborative editor where changes are broadcast to all peers.
+   * Each node applies JSON-formatted updates as they arrive.
 
-UDP Discovery Test Coverage: While the UDP discovery reception logic (including reciprocal connection prompting) is implemented in the library, the full enhancement and verification of tests for this specific mechanism within `test_mesh_network.cpp` were significantly hindered by tool limitations during certain development phases. The `enhanced_test_suite.cpp` file contains proposals for more thorough UDP-based discovery tests.
-Scalability of Broadcasts: Broadcast messages are sent individually to each connected peer. This could be inefficient in networks with a very large number of direct peers for a single node.
-Network Partitions: The library does not have advanced mechanisms to detect or automatically heal network partitions.
-Message Guarantees: While TCP provides reliability for direct peer-to-peer links, the library itself does not offer end-to-end guaranteed delivery or complex routing across multiple hops (it primarily facilitates a flat mesh of directly connected peers).
-UDP Reliability: UDP discovery messages are inherently unreliable and can be lost. The periodic nature of these broadcasts and the seed node mechanism are intended to mitigate this for initial discovery.
+4. **Distributed Task Queue**
+
+   * A node broadcasts a task request.
+   * Interested peers send a unicast to claim the task.
+   * Results are sent back via unicast.
+
+5. **Sensor Networks / IoT**
+
+   * IoT devices form a local mesh.
+   * Sensors broadcast readings; controllers unicast configuration commands.
+
+---
+
+## 8. Running the Test Suite
+
+1. **Build Tests**
+
+   ```bash
+   make -f Makefile.tests
+   ```
+
+   or
+
+   ```bash
+   make -f Makefile.tests build_tests
+   ```
+
+2. **Run Tests**
+
+   ```bash
+   ./test_mesh_network
+   ```
+
+   * Tests include unicast/broadcast functionality, peer discovery, and node-failure recovery.
+
+3. **Clean Test Builds**
+
+   ```bash
+   make -f Makefile.tests clean_tests
+   ```
+
+> **Note on Enhanced Test Suite**
+> During development, an `enhanced_test_suite.cpp` was created with more rigorous scenarios:
+>
+> * Full-mesh validation under various seeding conditions.
+> * Unicast/broadcast reliability under dynamic membership.
+> * Scalability assessments.
+>
+> Review `enhanced_test_suite.cpp` and consider integrating its test cases into `test_mesh_network.cpp` to strengthen coverage.
+
+---
+
+## 9. Assumptions & Design Decisions
+
+* **Flat Mesh Topology**: Each node maintains direct TCP connections to all known peers.
+* **JSON Messaging**: All messages (heartbeats, peer lists, unicast/broadcast) use JsonCpp for serialization.
+* **Peer Discovery**:
+
+  * Initial discovery via UDP broadcast (no configuration required on LAN).
+  * Transitive discovery by exchanging peer lists over TCP.
+* **Heartbeating**: Periodic TCP-based heartbeats ensure timely detection of unresponsive peers.
+* **No Multi-hop Routing**: The library focuses on a flat mesh; it does not implement multi-hop routing or end-to-end delivery guarantees beyond the TCP link.
+
+---
+
+## 10. Known Issues & Limitations
+
+* **UDP Reliability**: UDP broadcasts are inherently unreliable. Missed broadcasts may delay initial discovery.
+* **Broadcast Efficiency**: Broadcast messages are individually sent to each peer. In networks with many peers, this can become inefficient.
+* **Network Partitions**: No advanced mechanism exists to detect or heal network partitions automatically.
+* **Scalability**: For very large meshes, a full-mesh TCP model may not scale. Consider hierarchical or partial-mesh designs for hundreds of peers.
+* **Test Coverage**:
+
+  * UDP discovery logic is implemented, but comprehensive automated tests for this mechanism reside in `enhanced_test_suite.cpp`.
+  * Integrating those tests into the main suite will improve overall coverage.
+
+---
+
+## 11. License
 
 
+See `LICENSE` for details.
 
-[end of README.md]
+---
+
+## 12. Contact & Contribution
+
+* **Repository**: `<repository URL>`
+* **Issues / Pull Requests**: Please open issues or PRs on GitLab/GitHub.
+* **Author**: \[Your Name]
+* **Acknowledgments**: Based on ZeroMQ, JsonCpp, and contributions from the open-source community.
+
+```markdown
+```
