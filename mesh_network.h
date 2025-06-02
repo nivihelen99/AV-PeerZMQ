@@ -1,7 +1,6 @@
 #ifndef MESH_NETWORK_H
 #define MESH_NETWORK_H
 
-#define CPPZMQ_HAS_DRAFT_API // Enable DRAFT API for ZMQ_DGRAM if needed
 // #include <zmq.h> // Let zmq.hpp include zmq.h
 #include <zmq.hpp>
 #include <thread>

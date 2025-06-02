@@ -1,6 +1,7 @@
 // mesh_network.cpp - Complete implementation of remaining methods
 
-#include "mesh_network.h"
+#include <zmq.h> // Should be before mesh_network.h
+#include "mesh_network.h" // This includes zmq.hpp
 #include <nlohmann/json.hpp> // Already in mesh_network.h, but good for explicitness
 #include <algorithm>
 #include <iomanip>
@@ -353,39 +354,49 @@ void MeshNetwork::send_peer_list(const NodeId& requester) {
 }
 
 void MeshNetwork::broadcast_discovery() {
-    // Entire body commented out due to ZMQ_DGRAM issue
-    /*
-    // Use UDP broadcast for initial peer discovery
-    nlohmann::json discovery_data;
-    discovery_data["sender"] = local_node_.id;
-    discovery_data["port"] = local_node_.port;
-    discovery_data["discovery_port"] = discovery_port_;
-    discovery_data["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-    
-    std::string discovery_msg = create_message(MessageType::PEER_DISCOVERY, discovery_data);
-    
     try {
-        // Broadcast to local network using multicast.
-        // Using multicast address 239.255.0.1 for local network discovery.
-        std::string broadcast_address = "udp://239.255.0.1:" + std::to_string(discovery_port_);
+        zmq::socket_t pub_socket(context_, ZMQ_PUB);
+
+        // Note: For epgm, the publisher also typically 'binds'.
+        // Using a common interface 'eth0' and multicast address '239.255.0.1'.
+        // These might need to be configurable or platform-dependent.
+        std::string epgm_address = "epgm://eth0;239.255.0.1:" + std::to_string(discovery_port_);
+        LOG_INFO("Broadcasting discovery from: " << epgm_address); // Log the address
         
-        // ZMQ_DGRAM is defined as 18 in zmq.h, but having issues with visibility via zmq.hpp
-        zmq::socket_t broadcast_socket(context_, zmq::socket_type::dgram);
-        broadcast_socket.connect(broadcast_address);
+        // Set a short linger period to allow messages to be sent on close
+        int linger = 100; // milliseconds
+        pub_socket.set(zmq::sockopt::linger, linger);
         
-        zmq::message_t msg(discovery_msg.size());
-        memcpy(msg.data(), discovery_msg.c_str(), discovery_msg.size());
-        broadcast_socket.send(msg, zmq::send_flags::dontwait);
+        // For some ZMQ versions/transports, a brief pause after bind for PUB sockets can be helpful.
+        // Or consider setting ZMQ_SNDHWM or other options if messages are lost.
+        pub_socket.bind(epgm_address.c_str());
         
-        broadcast_socket.close();
+        // Brief pause to allow bind to complete and subscriber to connect (if already up)
+        // This is a common heuristic, not a guaranteed solution for reliability.
+        std::this_thread::sleep_for(std::chrono::milliseconds(50)); // 50ms pause
+
+        nlohmann::json discovery_data;
+        discovery_data["sender"] = local_node_.id; // local_node_ is NodeId, .id is "ip:port" string
+        discovery_data["port"] = local_node_.port; // The main communication port
+        // discovery_data["discovery_port"] = discovery_port_; // Not strictly needed by receiver if using fixed discovery addr
+        discovery_data["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
         
+        std::string discovery_msg_str = create_message(MessageType::PEER_DISCOVERY, discovery_data);
+        
+        zmq::message_t message(discovery_msg_str.size());
+        memcpy(message.data(), discovery_msg_str.c_str(), discovery_msg_str.size());
+        
+        if (!pub_socket.send(message, zmq::send_flags::dontwait)) {
+            LOG_ERROR("Failed to send discovery broadcast message.");
+        } else {
+            // LOG_INFO("Sent discovery broadcast: " << discovery_msg_str); // Can be verbose
+        }
+        
+        // pub_socket.close(); // Socket will close when it goes out of scope
     } catch (const zmq::error_t& e) {
-        // Broadcast might fail in some network configurations - that's okay
-        // We rely on seed nodes for bootstrap
+        LOG_ERROR("Error in broadcast_discovery (EPGM PUB): " << e.what() << ". EPGM support might be missing or interface 'eth0' incorrect.");
     }
-    */
-    LOG_INFO("broadcast_discovery temporarily disabled due to ZeroMQ DGRAM issue.");
 }
 
 // The definition for parse_message(const std::string& message, MessageType& type, std::string& out_errors)
@@ -484,7 +495,7 @@ MeshNetwork::MeshNetwork(const std::string& local_ip, uint16_t local_port,
     LOG_INFO("MeshNetwork constructor for " << local_node_.id);
     // Sockets are initialized here, ensuring they are new.
     router_socket_ = std::make_unique<zmq::socket_t>(context_, zmq::socket_type::router);
-    // discovery_socket_ = std::make_unique<zmq::socket_t>(context_, zmq::socket_type::dgram); // Commented out for compilation
+    discovery_socket_ = std::make_unique<zmq::socket_t>(context_, ZMQ_SUB); // Commented out for compilation
 }
 
 MeshNetwork::~MeshNetwork() {
@@ -516,22 +527,32 @@ bool MeshNetwork::start() {
         try { discovery_socket_->close(); } catch (const zmq::error_t&) { /* ignore */ }
         discovery_socket_.reset();
     }
-    // discovery_socket_ = std::make_unique<zmq::socket_t>(context_, zmq::socket_type::dgram); // Commented out for compilation
-    // LOG_INFO("MeshNetwork::start(): New discovery_socket_ created for " << local_node_.id); // Commented out as it relates to dgram
+    discovery_socket_ = std::make_unique<zmq::socket_t>(context_, ZMQ_SUB); // Commented out for compilation
+    LOG_INFO("MeshNetwork::start(): New discovery_socket_ (ZMQ_SUB) created for " << local_node_.id);
 
     try {
-        LOG_INFO("MeshNetwork::start(): Binding sockets for " << local_node_.id);
+        LOG_INFO("MeshNetwork::start(): Binding router socket and setting up discovery (SUB) socket for " << local_node_.id);
         std::string router_address = "tcp://*:" + std::to_string(local_node_.port);
         router_socket_->bind(router_address);
 
-        // std::string discovery_address = "udp://*:" + std::to_string(discovery_port_); // Commented out
-        // if (discovery_socket_) discovery_socket_->bind(discovery_address); // Commented out
+        // Setup for ZMQ_SUB discovery_socket_
+        if (discovery_socket_) {
+            try {
+                std::string epgm_address = "epgm://eth0;239.255.0.1:" + std::to_string(discovery_port_);
+                LOG_INFO("Discovery socket subscribing to: " << epgm_address); // Log the address
+                discovery_socket_->connect(epgm_address.c_str());
+                discovery_socket_->set(zmq::sockopt::subscribe, ""); // Subscribe to all messages
+            } catch (const zmq::error_t& e) {
+                LOG_ERROR("Failed to connect or subscribe discovery_socket_ to EPGM: " << e.what() << ". EPGM support might be missing or interface 'eth0' incorrect.");
+                // Optionally, disable further discovery attempts or handle error
+            }
+        }
 
         int linger = 0;
         router_socket_->set(zmq::sockopt::linger, linger);
-        // if (discovery_socket_) discovery_socket_->set(zmq::sockopt::linger, linger); // Commented out
+        if (discovery_socket_) discovery_socket_->set(zmq::sockopt::linger, linger); 
 
-        LOG_INFO("MeshNetwork::start(): Setting socket options for " << local_node_.id);
+        LOG_INFO("MeshNetwork::start(): Socket options set for " << local_node_.id);
         // Redundant linger declaration removed.
 
         LOG_INFO("MeshNetwork::start(): Starting threads for " << local_node_.id);
@@ -743,13 +764,13 @@ size_t MeshNetwork::get_peer_count() const {
 
 void MeshNetwork::message_handler_loop() {
     zmq::pollitem_t items[] = {
-        { *router_socket_, 0, ZMQ_POLLIN, 0 }      // Use * to get the socket handle
-        // { *discovery_socket_, 0, ZMQ_POLLIN, 0 }  // Commented out
+        { *router_socket_, 0, ZMQ_POLLIN, 0 },      // Use * to get the socket handle
+        { *discovery_socket_, 0, ZMQ_POLLIN, 0 }  // Commented out
     };
 
     while (running_.load()) {
         try {
-            zmq::poll(items, 1, std::chrono::milliseconds(100)); // Poll only router_socket_
+            zmq::poll(items, 2, std::chrono::milliseconds(100)); // Poll both sockets
 
             if (items[0].revents & ZMQ_POLLIN) {
                 zmq::message_t identity, received_message;
@@ -759,13 +780,13 @@ void MeshNetwork::message_handler_loop() {
                     handle_message(identity, received_message);
                 }
             }
-            // if (items[1].revents & ZMQ_POLLIN) { // Commented out discovery socket handling
-            //      zmq::message_t discovery_msg_zmq;
-            //      // Assuming discovery_socket_ is a regular socket, not REQ/REP, so just recv
-            //      if(discovery_socket_ && discovery_socket_->recv(discovery_msg_zmq, zmq::recv_flags::dontwait)) { // Added check for discovery_socket_
-            //         handle_discovery_message(discovery_msg_zmq);
-            //      }
-            // }
+            if (items[1].revents & ZMQ_POLLIN) { // Commented out discovery socket handling
+                 zmq::message_t discovery_msg_zmq;
+                 // Assuming discovery_socket_ is a regular socket, not REQ/REP, so just recv
+                 if(discovery_socket_ && discovery_socket_->recv(discovery_msg_zmq, zmq::recv_flags::dontwait)) { // Added check for discovery_socket_
+                    handle_discovery_message(discovery_msg_zmq);
+                 }
+            }
         } catch (const zmq::error_t& e) {
             if (running_.load() && e.num() != ETERM) {
                 LOG_ERROR("Message handler_loop ZMQ error: " << e.what());

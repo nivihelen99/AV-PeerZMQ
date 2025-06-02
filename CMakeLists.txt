@@ -36,6 +36,7 @@ message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}") # Display the build type
 
 # Library target for mesh_network
 add_library(mesh_network_lib mesh_network.cpp mesh_network.h)
+target_compile_definitions(mesh_network_lib PUBLIC CPPZMQ_HAS_DRAFT_API)
 
 # Link nlohmann/json to the library
 if(TARGET nlohmann_json::nlohmann_json)
