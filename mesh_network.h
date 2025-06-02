@@ -2,7 +2,7 @@
 #define MESH_NETWORK_H
 
 #define CPPZMQ_HAS_DRAFT_API // Enable DRAFT API for ZMQ_DGRAM if needed
-#include <zmq.h>
+// #include <zmq.h> // Let zmq.hpp include zmq.h
 #include <zmq.hpp>
 #include <thread>
 #include <atomic>
@@ -14,7 +14,7 @@
 #include <functional>
 #include <chrono>
 #include <random>
-#include <json/json.h>
+#include <nlohmann/json.hpp>
 #include <iostream>
 #include <sstream>
 
@@ -141,12 +141,12 @@ private:
     // Internal message handling
     void message_handler_loop();
     void handle_message(const zmq::message_t& identity, const zmq::message_t& message);
-    void process_heartbeat(const NodeId& sender, const Json::Value& data);
-    void process_peer_discovery(const NodeId& sender, const Json::Value& data);
-    void process_unicast(const NodeId& sender, const Json::Value& data);
-    void process_broadcast(const NodeId& sender, const Json::Value& data);
-    void process_peer_list(const NodeId& sender, const Json::Value& data);
-    void process_goodbye(const NodeId& sender, const Json::Value& data);
+    void process_heartbeat(const NodeId& sender, const nlohmann::json& data);
+    void process_peer_discovery(const NodeId& sender, const nlohmann::json& data);
+    void process_unicast(const NodeId& sender, const nlohmann::json& data);
+    void process_broadcast(const NodeId& sender, const nlohmann::json& data);
+    void process_peer_list(const NodeId& sender, const nlohmann::json& data);
+    void process_goodbye(const NodeId& sender, const nlohmann::json& data);
     
     // Peer management
     void heartbeat_loop();
@@ -157,8 +157,8 @@ private:
     void update_peer_last_seen(const NodeId& peer_id);
     
     // Utility methods
-    std::string create_message(MessageType type, const Json::Value& data);
-    Json::Value parse_message(const std::string& message, MessageType& type, std::string& out_errors); // Declaration only
+    std::string create_message(MessageType type, const nlohmann::json& data);
+    nlohmann::json parse_message(const std::string& message, MessageType& type, std::string& out_errors); // Declaration only
     std::string node_id_to_address(const NodeId& node_id);
     NodeId address_to_node_id(const std::string& address);
     void add_jitter(int base_ms);
