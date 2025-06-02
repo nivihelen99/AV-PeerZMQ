@@ -129,13 +129,19 @@ private:
                     size_t colon_pos = target_str.find(':');
                     if (colon_pos != std::string::npos) {
                         std::string ip = target_str.substr(0, colon_pos);
-                        uint16_t port = static_cast<uint16_t>(std::stoi(target_str.substr(colon_pos + 1)));
-                        NodeId target(ip, port);
-                        
-                        if (network_->send_unicast(target, message)) {
-                            std::cout << "Unicast sent to " << target.id << ": " << message << std::endl;
-                        } else {
-                            std::cout << "Failed to send unicast to " << target.id << std::endl;
+                        try {
+                            uint16_t port = static_cast<uint16_t>(std::stoi(target_str.substr(colon_pos + 1)));
+                            NodeId target(ip, port);
+
+                            if (network_->send_unicast(target, message)) {
+                                std::cout << "Unicast sent to " << target.id << ": " << message << std::endl;
+                            } else {
+                                std::cout << "Failed to send unicast to " << target.id << std::endl;
+                            }
+                        } catch (const std::invalid_argument& ia) {
+                            std::cerr << "Invalid port number: " << target_str.substr(colon_pos + 1) << std::endl;
+                        } catch (const std::out_of_range& oor) {
+                            std::cerr << "Port number out of range: " << target_str.substr(colon_pos + 1) << std::endl;
                         }
                     } else {
                         std::cout << "Invalid target format. Use ip:port" << std::endl;
