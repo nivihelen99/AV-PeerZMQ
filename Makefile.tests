@@ -18,7 +18,7 @@ OBJS := $(LIB_OBJS) $(TEST_OBJS)
 # Compiler and Linker Flags
 # -----------------------------------------------------------------------------
 # Base flags
-BASE_CXXFLAGS := -std=c++11 -Wall -pthread -g # Added -g for debugging tests
+BASE_CXXFLAGS := -std=c++17 -Wall -pthread -g # Changed to C++17, kept -g
 BASE_LDFLAGS := -pthread
 BASE_LDLIBS := -pthread # -pthread can also be needed for linking with g++
 

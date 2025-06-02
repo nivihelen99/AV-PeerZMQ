@@ -17,7 +17,7 @@ APP_OBJS := $(APP_SRCS:.cpp=.o)
 # Compiler and Linker Flags
 # -----------------------------------------------------------------------------
 # Base flags
-BASE_CXXFLAGS := -std=c++11 -Wall -pthread
+BASE_CXXFLAGS := -std=c++17 -Wall -pthread # Changed to C++17
 BASE_LDFLAGS := -pthread
 BASE_LDLIBS := -pthread # -pthread can also be needed for linking with g++
 
