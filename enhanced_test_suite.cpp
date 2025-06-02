@@ -451,11 +451,11 @@ public:
 };
 
 // Main function to run these tests (if this were a standalone file)
-// int main() {
-//     EnhancedMeshNetworkTester enhanced_tester;
-//     enhanced_tester.run_all_enhanced_tests();
-//     return 0;
-// }
+int main() {
+    EnhancedMeshNetworkTester enhanced_tester;
+    enhanced_tester.run_all_enhanced_tests();
+    return 0;
+}
 
 /*
     Placeholder for test_chaotic_joins_leaves:
@@ -572,7 +572,4 @@ public:
         return true;
     }
 */
-int main()
-{
 
-}
