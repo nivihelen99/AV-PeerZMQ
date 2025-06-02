@@ -7,7 +7,7 @@ Peer-to-Peer Mesh Networking Library
 
 ## 1. Project Overview
 
-**AV-PeerZMQ** is a C++ library for building decentralized, peer-to-peer (P2P) mesh networks. It leverages ZeroMQ for asynchronous messaging and JsonCpp for message serialization. The library enables:
+**AV-PeerZMQ** is a C++ library for building decentralized, peer-to-peer (P2P) mesh networks. It leverages ZeroMQ for asynchronous messaging and nlohmann/json for message serialization. The library enables:
 
 - **Dynamic Peer Discovery**
   - **Seed Nodes**: Bootstrap by connecting to a list of known seed nodes.
@@ -24,7 +24,7 @@ Peer-to-Peer Mesh Networking Library
   - Peers attempt to reconnect or discover alternative peers if connections fail.
 
 - **Cross-Platform Potential**
-  - Built with standard C++, ZeroMQ, and JsonCpp, making it portable across major operating systems.
+  - Built with standard C++, ZeroMQ, and nlohmann/json, making it portable across major operating systems.
 
 ---
 
@@ -123,94 +123,85 @@ enum class MessageType {
 
 ## 3. Prerequisites
 
-Before building AV-PeerZMQ, install the following:
+Before building AV-PeerZMQ, ensure you have the following installed:
 
-1. **C++ Compiler**
+1.  **C++ Compiler:**
+    *   A modern C++ compiler with C++17 support (as specified in `CMakeLists.txt`).
+    *   Examples: GCC (≥ 7.0) or Clang (≥ 5.0).
 
-   * GCC (≥ 4.8) or Clang (≥ 3.3) with C++11 support.
+2.  **CMake (≥ 3.15):**
+    *   CMake is used for building the project.
+    *   Debian/Ubuntu: `sudo apt-get install cmake`
+    *   Fedora: `sudo dnf install cmake`
+    *   macOS (Homebrew): `brew install cmake`
+    *   Verify installation: `cmake --version`
 
-2. **Make Utility**
+3.  **ZeroMQ Development Libraries (≥ 4.x.x):**
+    *   The core messaging library.
+    *   Debian/Ubuntu: `sudo apt-get install libzmq3-dev`
+    *   Fedora: `sudo dnf install zeromq-devel`
+    *   macOS (Homebrew): `brew install zeromq`
 
-   * `sudo apt-get install make` (Debian/Ubuntu)
-   * `sudo dnf install make` (Fedora)
-   * `brew install make` (macOS)
+4.  **pkg-config Utility:**
+    *   Used by CMake to find ZeroMQ.
+    *   Debian/Ubuntu: `sudo apt-get install pkg-config`
+    *   Fedora: `sudo dnf install pkgconfig`
+    *   macOS (Homebrew): `brew install pkg-config`
 
-3. **ZeroMQ Development Libraries (≥ 4.x.x)**
+> **Note on nlohmann/json:** The nlohmann/json library for JSON manipulation is included automatically via CMake's `FetchContent` mechanism during the build process. Manual installation is not required.
 
-   * Debian/Ubuntu: `sudo apt-get install libzmq3-dev`
-   * Fedora: `sudo dnf install zeromq-devel`
-   * macOS (Homebrew): `brew install zeromq`
-
-4. **JsonCpp Development Libraries (≥ 1.x.x)**
-
-   * Debian/Ubuntu: `sudo apt-get install libjsoncpp-dev`
-   * Fedora: `sudo dnf install jsoncpp-devel`
-   * macOS (Homebrew): `brew install jsoncpp`
-
-5. **pkg-config Utility**
-
-   * Debian/Ubuntu: `sudo apt-get install pkg-config`
-   * Fedora: `sudo dnf install pkgconfig`
-   * macOS (Homebrew): `brew install pkg-config`
-
-> *If ZeroMQ or JsonCpp are installed in custom locations not managed by `pkg-config`, set the `PKG_CONFIG_PATH` environment variable or pass `INC_PATHS` and `LIB_PATHS` to `make`.*
+> **Note on ZeroMQ Location:** If ZeroMQ is installed in a custom location not typically searched by `pkg-config`, you might need to set the `PKG_CONFIG_PATH` environment variable before running CMake. For example: `export PKG_CONFIG_PATH=/custom/libzmq/pkgconfig:$PKG_CONFIG_PATH`
 
 ---
 
 ## 4. Building the Project
 
-AV-PeerZMQ includes two Makefiles:
+AV-PeerZMQ uses CMake for building the library, example application, and test suites.
 
-* **`Makefile`**: Builds the example application (`example_app`).
-* **`Makefile.tests`**: Builds the test suite (`test_mesh_network`).
+### 4.1 Standard Build Process
 
-### 4.1 Example Application (`example_app`)
+1.  **Create a build directory:**
+    It's recommended to perform an out-of-source build.
 
-1. **Build**
+    ```bash
+    mkdir build
+    cd build
+    ```
 
-   ```bash
-   make
-   ```
+2.  **Configure the project using CMake:**
+    This step generates the build files for your specific environment.
 
-   * Compiles `mesh_network.cpp` and `example_app.cpp`.
-   * Links against ZeroMQ, JsonCpp, and pthread.
-   * Produces `example_app` in the project root.
+    ```bash
+    # For a Release build (optimized, no debug symbols)
+    cmake .. -DCMAKE_BUILD_TYPE=Release
 
-2. **Clean**
+    # For a Debug build (includes debug symbols)
+    # cmake .. -DCMAKE_BUILD_TYPE=Debug
+    ```
+    If no `CMAKE_BUILD_TYPE` is specified, CMake will default to `Release` for this project.
 
-   ```bash
-   make clean
-   ```
+3.  **Compile the project:**
+    Use the `--build` option with `cmake`, which is a platform-agnostic way to invoke the underlying build system (e.g., Make, Ninja).
 
-3. **Manual Compile Command** (if not using `make`)
+    ```bash
+    cmake --build .
+    ```
+    Alternatively, after running `cmake ..`, you can use the native build tool directly (e.g., `make` on Linux/macOS or `MSBuild.exe` on Windows).
 
-   ```bash
-   g++ -std=c++11 -Wall -o example_app example_app.cpp mesh_network.cpp \
-       -I/usr/local/include -L/usr/local/lib -lzmq -ljsoncpp -pthread
-   ```
+### 4.2 Build Outputs
 
-### 4.2 Test Suite (`test_mesh_network`)
+*   The compiled library (`libmesh_network_lib.a` or similar) will be located in the `build` directory (or a subdirectory, depending on your CMake version and generator).
+*   The executable for the example application (`example_app`) will be in the `build` directory.
+*   The executables for the test suites (`test_mesh_network` and `enhanced_tests`) will also be in the `build` directory.
 
-1. **Build**
+### 4.3 Cleaning Build Files
 
-   ```bash
-   make -f Makefile.tests build_tests
-   ```
+To clean the build files, simply remove the `build` directory:
 
-   or simply:
-
-   ```bash
-   make -f Makefile.tests
-   ```
-
-   * Compiles `mesh_network.cpp` and `test_mesh_network.cpp`.
-   * Produces `test_mesh_network`.
-
-2. **Clean**
-
-   ```bash
-   make -f Makefile.tests clean_tests
-   ```
+```bash
+# From the project root directory
+rm -rf build
+```
 
 ---
 
@@ -219,7 +210,7 @@ AV-PeerZMQ includes two Makefiles:
 ### 5.1 Integrating the Library
 
 1. Include `mesh_network.h` in your C++ application.
-2. Compile and link `mesh_network.cpp` with your application. The `Makefile` handles this for `example_app`.
+2. Compile and link `mesh_network.cpp` (as part of the `mesh_network_lib` library) with your application. The CMake build system handles this for `example_app`.
 
 ### 5.2 `example_app` Command-Line Interface
 
@@ -500,47 +491,47 @@ int main(int argc, char* argv[]) {
 
 ## 8. Running the Test Suite
 
-1. **Build Tests**
+The project includes two test suites: `test_mesh_network` and `enhanced_tests`. Both are built as part of the default CMake build process (see Section 4: Building the Project).
 
-   ```bash
-   make -f Makefile.tests
-   ```
+1.  **Ensure Tests are Built:**
+    Follow the instructions in "Building the Project" to configure and compile the project. This will also build the test executables (`test_mesh_network` and `enhanced_tests`) and place them in the `build` directory.
 
-   or
+2.  **Run Tests using CTest:**
+    CTest is CMake's testing tool and is the recommended way to run tests.
 
-   ```bash
-   make -f Makefile.tests build_tests
-   ```
+    ```bash
+    cd build  # Navigate to your build directory
+    ctest
+    ```
+    This command will discover and run all tests that were added using the `add_test()` command in `CMakeLists.txt`. You should see output indicating the status of each test.
 
-2. **Run Tests**
+    To run tests with more verbose output, you can use:
+    ```bash
+    ctest -V
+    ```
+    Or for even more detail (e.g., individual test output):
+    ```bash
+    ctest -VV
+    ```
 
-   ```bash
-   ./test_mesh_network
-   ```
+3.  **Run Individual Test Executables (Optional):**
+    You can also run the test executables directly if needed for debugging or specific checks.
 
-   * Tests include unicast/broadcast functionality, peer discovery, and node-failure recovery.
+    ```bash
+    cd build  # Navigate to your build directory
+    ./test_mesh_network
+    ./enhanced_tests
+    ```
 
-3. **Clean Test Builds**
-
-   ```bash
-   make -f Makefile.tests clean_tests
-   ```
-
-> **Note on Enhanced Test Suite**
-> During development, an `enhanced_test_suite.cpp` was created with more rigorous scenarios:
->
-> * Full-mesh validation under various seeding conditions.
-> * Unicast/broadcast reliability under dynamic membership.
-> * Scalability assessments.
->
-> Review `enhanced_test_suite.cpp` and consider integrating its test cases into `test_mesh_network.cpp` to strengthen coverage.
+> **Note on Enhanced Test Suite:**
+> The `enhanced_test_suite.cpp` provides more rigorous scenarios, including full-mesh validation, reliability under dynamic conditions, and scalability assessments. It is compiled into the `enhanced_tests` executable and is automatically run as part of `ctest`.
 
 ---
 
 ## 9. Assumptions & Design Decisions
 
 * **Flat Mesh Topology**: Each node maintains direct TCP connections to all known peers.
-* **JSON Messaging**: All messages (heartbeats, peer lists, unicast/broadcast) use JsonCpp for serialization.
+* **JSON Messaging**: All messages (heartbeats, peer lists, unicast/broadcast) use nlohmann/json for serialization.
 * **Peer Discovery**:
 
   * Initial discovery via UDP broadcast (no configuration required on LAN).
@@ -575,7 +566,7 @@ See `LICENSE` for details.
 * **Repository**: `<repository URL>`
 * **Issues / Pull Requests**: Please open issues or PRs on GitLab/GitHub.
 * **Author**: \[Your Name]
-* **Acknowledgments**: Based on ZeroMQ, JsonCpp, and contributions from the open-source community.
+* **Acknowledgments**: Based on ZeroMQ, nlohmann/json, and contributions from the open-source community.
 
 ```markdown
 ```
