@@ -353,8 +353,6 @@ void MeshNetwork::send_peer_list(const NodeId& requester) {
 }
 
 void MeshNetwork::broadcast_discovery() {
-    // Entire body commented out due to ZMQ_DGRAM issue
-    /*
     // Use UDP broadcast for initial peer discovery
     nlohmann::json discovery_data;
     discovery_data["sender"] = local_node_.id;
@@ -371,7 +369,7 @@ void MeshNetwork::broadcast_discovery() {
         std::string broadcast_address = "udp://239.255.0.1:" + std::to_string(discovery_port_);
         
         // ZMQ_DGRAM is defined as 18 in zmq.h, but having issues with visibility via zmq.hpp
-        zmq::socket_t broadcast_socket(context_, zmq::socket_type::dgram);
+        zmq::socket_t broadcast_socket(context_, ZMQ_DGRAM);
         broadcast_socket.connect(broadcast_address);
         
         zmq::message_t msg(discovery_msg.size());
@@ -384,8 +382,6 @@ void MeshNetwork::broadcast_discovery() {
         // Broadcast might fail in some network configurations - that's okay
         // We rely on seed nodes for bootstrap
     }
-    */
-    LOG_INFO("broadcast_discovery temporarily disabled due to ZeroMQ DGRAM issue.");
 }
 
 // The definition for parse_message(const std::string& message, MessageType& type, std::string& out_errors)
@@ -484,7 +480,7 @@ MeshNetwork::MeshNetwork(const std::string& local_ip, uint16_t local_port,
     LOG_INFO("MeshNetwork constructor for " << local_node_.id);
     // Sockets are initialized here, ensuring they are new.
     router_socket_ = std::make_unique<zmq::socket_t>(context_, zmq::socket_type::router);
-    // discovery_socket_ = std::make_unique<zmq::socket_t>(context_, zmq::socket_type::dgram); // Commented out for compilation
+    discovery_socket_ = std::make_unique<zmq::socket_t>(context_, ZMQ_DGRAM); // Commented out for compilation
 }
 
 MeshNetwork::~MeshNetwork() {
@@ -516,20 +512,20 @@ bool MeshNetwork::start() {
         try { discovery_socket_->close(); } catch (const zmq::error_t&) { /* ignore */ }
         discovery_socket_.reset();
     }
-    // discovery_socket_ = std::make_unique<zmq::socket_t>(context_, zmq::socket_type::dgram); // Commented out for compilation
-    // LOG_INFO("MeshNetwork::start(): New discovery_socket_ created for " << local_node_.id); // Commented out as it relates to dgram
+    discovery_socket_ = std::make_unique<zmq::socket_t>(context_, ZMQ_DGRAM); // Commented out for compilation
+    LOG_INFO("MeshNetwork::start(): New discovery_socket_ created for " << local_node_.id); // Commented out as it relates to dgram
 
     try {
         LOG_INFO("MeshNetwork::start(): Binding sockets for " << local_node_.id);
         std::string router_address = "tcp://*:" + std::to_string(local_node_.port);
         router_socket_->bind(router_address);
 
-        // std::string discovery_address = "udp://*:" + std::to_string(discovery_port_); // Commented out
-        // if (discovery_socket_) discovery_socket_->bind(discovery_address); // Commented out
+        std::string discovery_address = "udp://*:" + std::to_string(discovery_port_); // Commented out
+        if (discovery_socket_) discovery_socket_->bind(discovery_address); // Commented out
 
         int linger = 0;
         router_socket_->set(zmq::sockopt::linger, linger);
-        // if (discovery_socket_) discovery_socket_->set(zmq::sockopt::linger, linger); // Commented out
+        if (discovery_socket_) discovery_socket_->set(zmq::sockopt::linger, linger); // Commented out
 
         LOG_INFO("MeshNetwork::start(): Setting socket options for " << local_node_.id);
         // Redundant linger declaration removed.
@@ -743,13 +739,13 @@ size_t MeshNetwork::get_peer_count() const {
 
 void MeshNetwork::message_handler_loop() {
     zmq::pollitem_t items[] = {
-        { *router_socket_, 0, ZMQ_POLLIN, 0 }      // Use * to get the socket handle
-        // { *discovery_socket_, 0, ZMQ_POLLIN, 0 }  // Commented out
+        { *router_socket_, 0, ZMQ_POLLIN, 0 },      // Use * to get the socket handle
+        { *discovery_socket_, 0, ZMQ_POLLIN, 0 }  // Commented out
     };
 
     while (running_.load()) {
         try {
-            zmq::poll(items, 1, std::chrono::milliseconds(100)); // Poll only router_socket_
+            zmq::poll(items, 2, std::chrono::milliseconds(100)); // Poll both sockets
 
             if (items[0].revents & ZMQ_POLLIN) {
                 zmq::message_t identity, received_message;
@@ -759,13 +755,13 @@ void MeshNetwork::message_handler_loop() {
                     handle_message(identity, received_message);
                 }
             }
-            // if (items[1].revents & ZMQ_POLLIN) { // Commented out discovery socket handling
-            //      zmq::message_t discovery_msg_zmq;
-            //      // Assuming discovery_socket_ is a regular socket, not REQ/REP, so just recv
-            //      if(discovery_socket_ && discovery_socket_->recv(discovery_msg_zmq, zmq::recv_flags::dontwait)) { // Added check for discovery_socket_
-            //         handle_discovery_message(discovery_msg_zmq);
-            //      }
-            // }
+            if (items[1].revents & ZMQ_POLLIN) { // Commented out discovery socket handling
+                 zmq::message_t discovery_msg_zmq;
+                 // Assuming discovery_socket_ is a regular socket, not REQ/REP, so just recv
+                 if(discovery_socket_ && discovery_socket_->recv(discovery_msg_zmq, zmq::recv_flags::dontwait)) { // Added check for discovery_socket_
+                    handle_discovery_message(discovery_msg_zmq);
+                 }
+            }
         } catch (const zmq::error_t& e) {
             if (running_.load() && e.num() != ETERM) {
                 LOG_ERROR("Message handler_loop ZMQ error: " << e.what());
