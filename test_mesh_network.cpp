@@ -852,7 +852,7 @@ public:
 
         // Verification
         std::cout << "Final state of active nodes:" << std::endl;
-        int running_nodes_count = 0;
+        [[maybe_unused]] int running_nodes_count = 0;
         for(const auto& n : active_nodes_tracker) {
             // TestNode::network_ is private. We need a public method like is_running()
             // Assuming TestNode::get_peer_count() can be called on a stopped node (returns 0 or similar)
