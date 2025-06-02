@@ -38,24 +38,24 @@ message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}") # Display the build type
 add_library(mesh_network_lib mesh_network.cpp mesh_network.h)
 
 # Link nlohmann/json to the library
-# Assuming nlohmann_json::nlohmann_json is available after FetchContent_MakeAvailable
-# or nlohmann_json_alias is set up.
 if(TARGET nlohmann_json::nlohmann_json)
     target_link_libraries(mesh_network_lib PUBLIC nlohmann_json::nlohmann_json)
-elseif(TARGET nlohmann_json_alias)
-    target_link_libraries(mesh_network_lib PUBLIC nlohmann_json_alias)
-elseif(TARGET nlohmann_json_interface)
-    target_link_libraries(mesh_network_lib PUBLIC nlohmann_json_interface)
 else()
-    message(FATAL_ERROR "nlohmann_json target (nlohmann_json::nlohmann_json, nlohmann_json_alias, or nlohmann_json_interface) not found. Check third_party/CMakeLists.txt.")
+    message(FATAL_ERROR "nlohmann_json::nlohmann_json target not found. Check third_party/CMakeLists.txt.")
 endif()
 
 # Public include directories for the library, so consumers can find mesh_network.h
 target_include_directories(mesh_network_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Find ZeroMQ using pkg-config (CMake's FindZeroMQ might also work but pkg-config was used in Makefile)
+# Find ZeroMQ using pkg-config
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(ZeroMQ REQUIRED IMPORTED_TARGET libzmq libzmq-static zmq) # Check for various names
+pkg_check_modules(ZMQ REQUIRED libzmq) # Look for libzmq, prefix variables with ZMQ_
+
+if(ZMQ_FOUND)
+    message(STATUS "Configured ZeroMQ using pkg-config variables (Include: ${ZMQ_INCLUDE_DIRS}, Libs: ${ZMQ_LIBRARIES})")
+else()
+    message(FATAL_ERROR "ZeroMQ (libzmq) not found by pkg-config. Make sure libzmq-dev is installed.")
+endif()
 
 # Executable target for example_app
 add_executable(example_app example_app.cpp)
@@ -63,19 +63,12 @@ add_executable(example_app example_app.cpp)
 # Link mesh_network_lib and ZeroMQ
 target_link_libraries(example_app PRIVATE mesh_network_lib)
 
-if(TARGET PkgConfig::ZeroMQ)
-    target_link_libraries(example_app PRIVATE PkgConfig::ZeroMQ)
-    message(STATUS "Linked example_app with PkgConfig::ZeroMQ")
+# Link ZeroMQ
+if(ZMQ_FOUND)
+    target_include_directories(example_app PRIVATE ${ZMQ_INCLUDE_DIRS})
+    target_link_libraries(example_app PRIVATE ${ZMQ_LIBRARIES})
 else()
-    # Fallback if PkgConfig::ZeroMQ target isn't created (older CMake or pkg-config setup)
-    # This attempts to use the variables set by pkg_check_modules directly.
-    if(ZeroMQ_FOUND)
-        target_include_directories(example_app PRIVATE ${ZeroMQ_INCLUDE_DIRS})
-        target_link_libraries(example_app PRIVATE ${ZeroMQ_LIBRARIES})
-        message(STATUS "Linked example_app with ZeroMQ using legacy variables.")
-    else()
-        message(FATAL_ERROR "ZeroMQ not found by pkg-config. Make sure ZeroMQ is installed and pkg-config can find it.")
-    endif()
+    message(FATAL_ERROR "ZeroMQ (libzmq) not found by pkg-config for target example_app. Ensure libzmq-dev is installed.")
 endif()
 
 # Add pthread for linking, as it was in LDFLAGS/LDLIBS
@@ -89,17 +82,12 @@ add_executable(test_mesh_network test_mesh_network.cpp)
 # Link mesh_network_lib and ZeroMQ
 target_link_libraries(test_mesh_network PRIVATE mesh_network_lib)
 
-if(TARGET PkgConfig::ZeroMQ)
-    target_link_libraries(test_mesh_network PRIVATE PkgConfig::ZeroMQ)
-    message(STATUS "Linked test_mesh_network with PkgConfig::ZeroMQ")
+# Link ZeroMQ
+if(ZMQ_FOUND)
+    target_include_directories(test_mesh_network PRIVATE ${ZMQ_INCLUDE_DIRS})
+    target_link_libraries(test_mesh_network PRIVATE ${ZMQ_LIBRARIES})
 else()
-    if(ZeroMQ_FOUND)
-        target_include_directories(test_mesh_network PRIVATE ${ZeroMQ_INCLUDE_DIRS})
-        target_link_libraries(test_mesh_network PRIVATE ${ZeroMQ_LIBRARIES})
-        message(STATUS "Linked test_mesh_network with ZeroMQ using legacy variables.")
-    else()
-        message(FATAL_ERROR "ZeroMQ not found for test_mesh_network. Make sure ZeroMQ is installed.")
-    endif()
+    message(FATAL_ERROR "ZeroMQ (libzmq) not found by pkg-config for target test_mesh_network. Ensure libzmq-dev is installed.")
 endif()
 
 # Link pthreads
@@ -114,17 +102,12 @@ add_executable(enhanced_tests enhanced_test_suite.cpp)
 # Link mesh_network_lib and ZeroMQ
 target_link_libraries(enhanced_tests PRIVATE mesh_network_lib)
 
-if(TARGET PkgConfig::ZeroMQ)
-    target_link_libraries(enhanced_tests PRIVATE PkgConfig::ZeroMQ)
-    message(STATUS "Linked enhanced_tests with PkgConfig::ZeroMQ")
+# Link ZeroMQ
+if(ZMQ_FOUND)
+    target_include_directories(enhanced_tests PRIVATE ${ZMQ_INCLUDE_DIRS})
+    target_link_libraries(enhanced_tests PRIVATE ${ZMQ_LIBRARIES})
 else()
-    if(ZeroMQ_FOUND)
-        target_include_directories(enhanced_tests PRIVATE ${ZeroMQ_INCLUDE_DIRS})
-        target_link_libraries(enhanced_tests PRIVATE ${ZeroMQ_LIBRARIES})
-        message(STATUS "Linked enhanced_tests with ZeroMQ using legacy variables.")
-    else()
-        message(FATAL_ERROR "ZeroMQ not found for enhanced_tests. Make sure ZeroMQ is installed.")
-    endif()
+    message(FATAL_ERROR "ZeroMQ (libzmq) not found by pkg-config for target enhanced_tests. Ensure libzmq-dev is installed.")
 endif()
 
 # Link pthreads
