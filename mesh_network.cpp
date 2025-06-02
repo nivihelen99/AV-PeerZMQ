@@ -1,38 +1,39 @@
 // mesh_network.cpp - Complete implementation of remaining methods
 
 #include "mesh_network.h"
+#include <nlohmann/json.hpp> // Already in mesh_network.h, but good for explicitness
 #include <algorithm>
 #include <iomanip>
 
-void MeshNetwork::process_heartbeat(const NodeId& sender, const Json::Value& data) {
+void MeshNetwork::process_heartbeat(const NodeId& sender, const nlohmann::json& data) {
     // Heartbeat received - peer is alive
     connect_to_peer(sender);
 }
 
-void MeshNetwork::process_peer_discovery(const NodeId& sender, const Json::Value& data) {
+void MeshNetwork::process_peer_discovery(const NodeId& sender, const nlohmann::json& data) {
     // Peer discovery request - respond with our peer list
     send_peer_list(sender);
     connect_to_peer(sender);
 }
 
-void MeshNetwork::process_unicast(const NodeId& sender, const Json::Value& data) {
+void MeshNetwork::process_unicast(const NodeId& sender, const nlohmann::json& data) {
     if (unicast_callback_) {
-        std::string message = data["message"].asString();
+        std::string message = data["message"].get<std::string>();
         unicast_callback_(sender, message);
     }
 }
 
-void MeshNetwork::process_broadcast(const NodeId& sender, const Json::Value& data) {
+void MeshNetwork::process_broadcast(const NodeId& sender, const nlohmann::json& data) {
     if (broadcast_callback_) {
-        std::string message = data["message"].asString();
+        std::string message = data["message"].get<std::string>();
         broadcast_callback_(sender, message);
     }
 }
 
-void MeshNetwork::process_peer_list(const NodeId& sender, const Json::Value& data) {
-    if (data.isMember("peers") && data["peers"].isArray()) {
+void MeshNetwork::process_peer_list(const NodeId& sender, const nlohmann::json& data) {
+    if (data.contains("peers") && data["peers"].is_array()) {
         for (const auto& peer_json : data["peers"]) {
-            std::string peer_id = peer_json.asString();
+            std::string peer_id = peer_json.get<std::string>();
             if (peer_id != local_node_.id) {
                 NodeId peer_node = address_to_node_id(peer_id);
                 connect_to_peer(peer_node);
@@ -41,20 +42,21 @@ void MeshNetwork::process_peer_list(const NodeId& sender, const Json::Value& dat
     }
 }
 
-void MeshNetwork::process_goodbye(const NodeId& sender, const Json::Value& data) {
+void MeshNetwork::process_goodbye(const NodeId& sender, const nlohmann::json& data) {
     LOG_INFO("Received goodbye from " << sender.id);
     disconnect_peer(sender);
 }
 
 void MeshNetwork::handle_discovery_message(const zmq::message_t& message) {
+    std::string msg_str; // Declare msg_str outside the try block
     try {
         // Convert ZMQ message to std::string for parsing
-        std::string msg_str(static_cast<const char*>(message.data()), message.size());
+        msg_str = std::string(static_cast<const char*>(message.data()), message.size());
         MessageType type;
         std::string parse_err_str; // Will capture parsing error details
-        Json::Value data = parse_message(msg_str, type, parse_err_str);
+        nlohmann::json data = parse_message(msg_str, type, parse_err_str);
 
-        if (data.empty()) {
+        if (data.is_null()) { // Check for null JSON object
             LOG_ERROR("handle_discovery_message: Failed to parse discovery message. Error: " << parse_err_str
                       << ". Raw message (approx first 100 chars): " << msg_str.substr(0, 100));
             return;
@@ -62,13 +64,13 @@ void MeshNetwork::handle_discovery_message(const zmq::message_t& message) {
 
         if (type == MessageType::PEER_DISCOVERY) {
             // Check for essential fields after successful parsing
-            if (!data.isMember("sender") || !data["sender"].isString() ||
-                !data.isMember("port") || !data["port"].isUInt()) { // Assuming 'port' for main comm port is still sent in discovery
-                LOG_ERROR("handle_discovery_message: PEER_DISCOVERY message missing or invalid sender/port fields. Data: " << data.toStyledString());
+            if (!data.contains("sender") || !data["sender"].is_string() ||
+                !data.contains("port") || !data["port"].is_number_unsigned()) { // Assuming 'port' for main comm port is still sent in discovery
+                LOG_ERROR("handle_discovery_message: PEER_DISCOVERY message missing or invalid sender/port fields. Data: " << data.dump(4));
                 return;
             }
             
-            std::string sender_id_str = data["sender"].asString();
+            std::string sender_id_str = data["sender"].get<std::string>();
             // address_to_node_id is an existing method that parses "ip:port" string to NodeId.
             NodeId discovered_peer_node = address_to_node_id(sender_id_str);
 
@@ -90,7 +92,7 @@ void MeshNetwork::handle_discovery_message(const zmq::message_t& message) {
             // After connecting, send a PEER_DISCOVERY message back to the discovered peer
             // This allows the other peer to recognize us, connect back if needed, and exchange peer lists.
             // This helps in actively building the mesh network.
-            Json::Value discovery_data;
+            nlohmann::json discovery_data;
             discovery_data["sender"] = local_node_.id;
             discovery_data["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -128,8 +130,8 @@ void MeshNetwork::handle_discovery_message(const zmq::message_t& message) {
             // LOG_ERROR("handle_discovery_message: Received non-PEER_DISCOVERY message on discovery socket. Type: "
             //           << static_cast<int>(type));
         }
-    } catch (const Json::Exception& e) {
-        LOG_ERROR("handle_discovery_message: JSON parsing error: " << e.what() << " Message: " << std::string(static_cast<const char*>(message.data()), message.size()));
+    } catch (const nlohmann::json::exception& e) { // Catch nlohmann::json specific exceptions
+        LOG_ERROR("handle_discovery_message: JSON parsing/access error: " << e.what() << " Message: " << msg_str.substr(0,100));
     } catch (const zmq::error_t& e) {
         // Avoid error spam if socket is closed during shutdown or resource temporarily unavailable.
         if (running_.load() && e.num() != ETERM && e.num() != EAGAIN) {
@@ -146,7 +148,7 @@ void MeshNetwork::handle_discovery_message(const zmq::message_t& message) {
 void MeshNetwork::heartbeat_loop() {
     while (running_.load()) {
         // Send heartbeat to all connected peers
-        Json::Value heartbeat_data;
+        nlohmann::json heartbeat_data;
         heartbeat_data["sender"] = local_node_.id;
         heartbeat_data["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -291,7 +293,7 @@ void MeshNetwork::update_peer_last_seen(const NodeId& peer_id) {
 }
 
 void MeshNetwork::send_discovery_request() {
-    Json::Value discovery_data;
+    nlohmann::json discovery_data;
     discovery_data["sender"] = local_node_.id;
     discovery_data["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -315,16 +317,16 @@ void MeshNetwork::send_discovery_request() {
 }
 
 void MeshNetwork::send_peer_list(const NodeId& requester) {
-    Json::Value peer_list_data;
+    nlohmann::json peer_list_data;
     peer_list_data["sender"] = local_node_.id;
     
-    Json::Value peers_array(Json::arrayValue);
+    nlohmann::json peers_array = nlohmann::json::array(); // Create a JSON array
     
     {
         std::lock_guard<std::mutex> lock(peers_mutex_);
         for (const auto& pair : peers_) {
             if (pair.second->is_connected) {
-                peers_array.append(pair.first.id);
+                peers_array.push_back(pair.first.id); // Add elements to JSON array
             }
         }
     }
@@ -351,8 +353,10 @@ void MeshNetwork::send_peer_list(const NodeId& requester) {
 }
 
 void MeshNetwork::broadcast_discovery() {
+    // Entire body commented out due to ZMQ_DGRAM issue
+    /*
     // Use UDP broadcast for initial peer discovery
-    Json::Value discovery_data;
+    nlohmann::json discovery_data;
     discovery_data["sender"] = local_node_.id;
     discovery_data["port"] = local_node_.port;
     discovery_data["discovery_port"] = discovery_port_;
@@ -380,6 +384,8 @@ void MeshNetwork::broadcast_discovery() {
         // Broadcast might fail in some network configurations - that's okay
         // We rely on seed nodes for bootstrap
     }
+    */
+    LOG_INFO("broadcast_discovery temporarily disabled due to ZeroMQ DGRAM issue.");
 }
 
 // The definition for parse_message(const std::string& message, MessageType& type, std::string& out_errors)
@@ -413,26 +419,22 @@ void MeshNetwork::add_jitter(int base_ms) {
 // --- Definitions moved from mesh_network.h ---
 
 // Forward declare or ensure all process_X methods are above handle_message if not already
-Json::Value MeshNetwork::parse_message(const std::string& message, MessageType& type, std::string& out_errors) {
+nlohmann::json MeshNetwork::parse_message(const std::string& message, MessageType& type, std::string& out_errors) {
     try {
-        Json::Value root;
-        Json::CharReaderBuilder builder;
-        std::istringstream iss(message);
-        if (Json::parseFromStream(builder, iss, &root, &out_errors)) {
-            if (root.isMember("type") && root["type"].isUInt() &&
-                root.isMember("data") && root["data"].isObject()) {
-                type = static_cast<MessageType>(root["type"].asUInt());
-                return root["data"];
-            } else {
-                out_errors = "Message missing 'type' or 'data', or they have incorrect format.";
-            }
+        nlohmann::json root = nlohmann::json::parse(message);
+        if (root.contains("type") && root["type"].is_number_unsigned() &&
+            root.contains("data") && root["data"].is_object()) {
+            type = static_cast<MessageType>(root["type"].get<unsigned int>());
+            return root["data"];
+        } else {
+            out_errors = "Message missing 'type' or 'data', or they have incorrect format.";
         }
-    } catch (const Json::Exception& e) {
+    } catch (const nlohmann::json::parse_error& e) {
         out_errors = std::string("JSON parsing exception: ") + e.what();
     } catch (const std::exception& e) {
         out_errors = std::string("Generic parsing exception: ") + e.what();
     }
-    return Json::Value();
+    return nlohmann::json(); // Return a null JSON object on error
 }
 
 void MeshNetwork::handle_message(const zmq::message_t& identity, const zmq::message_t& message) {
@@ -440,22 +442,22 @@ void MeshNetwork::handle_message(const zmq::message_t& identity, const zmq::mess
         std::string msg_str(static_cast<const char*>(message.data()), message.size());
         MessageType type;
         std::string parse_err_str;
-        Json::Value data = parse_message(msg_str, type, parse_err_str);
+        nlohmann::json data = parse_message(msg_str, type, parse_err_str);
 
-        if (data.empty()) {
+        if (data.is_null()) { // Check for null JSON object
             LOG_ERROR("handle_message: Failed to parse router message. Error: " << parse_err_str
                       << ". Raw message (approx first 100 chars): " << msg_str.substr(0, 100));
             return;
         }
 
-        if (!data.isMember("sender") || !data["sender"].isString()) {
+        if (!data.contains("sender") || !data["sender"].is_string()) {
             LOG_ERROR("handle_message: Message (type " << static_cast<int>(type)
-                      << ") missing or invalid 'sender' field. Data: " << data.toStyledString());
+                      << ") missing or invalid 'sender' field. Data: " << data.dump(4));
             return;
         }
-        NodeId sender = address_to_node_id(data["sender"].asString());
+        NodeId sender = address_to_node_id(data["sender"].get<std::string>());
         if (sender.id.empty()) {
-            LOG_ERROR("handle_message: Failed to parse sender NodeId from message. Sender string: " << data["sender"].asString());
+            LOG_ERROR("handle_message: Failed to parse sender NodeId from message. Sender string: " << data["sender"].get<std::string>());
             return;
         }
         update_peer_last_seen(sender);
@@ -482,7 +484,7 @@ MeshNetwork::MeshNetwork(const std::string& local_ip, uint16_t local_port,
     LOG_INFO("MeshNetwork constructor for " << local_node_.id);
     // Sockets are initialized here, ensuring they are new.
     router_socket_ = std::make_unique<zmq::socket_t>(context_, zmq::socket_type::router);
-    discovery_socket_ = std::make_unique<zmq::socket_t>(context_, zmq::socket_type::dgram);
+    // discovery_socket_ = std::make_unique<zmq::socket_t>(context_, zmq::socket_type::dgram); // Commented out for compilation
 }
 
 MeshNetwork::~MeshNetwork() {
@@ -514,20 +516,20 @@ bool MeshNetwork::start() {
         try { discovery_socket_->close(); } catch (const zmq::error_t&) { /* ignore */ }
         discovery_socket_.reset();
     }
-    discovery_socket_ = std::make_unique<zmq::socket_t>(context_, zmq::socket_type::dgram);
-    LOG_INFO("MeshNetwork::start(): New discovery_socket_ created for " << local_node_.id);
+    // discovery_socket_ = std::make_unique<zmq::socket_t>(context_, zmq::socket_type::dgram); // Commented out for compilation
+    // LOG_INFO("MeshNetwork::start(): New discovery_socket_ created for " << local_node_.id); // Commented out as it relates to dgram
 
     try {
         LOG_INFO("MeshNetwork::start(): Binding sockets for " << local_node_.id);
         std::string router_address = "tcp://*:" + std::to_string(local_node_.port);
         router_socket_->bind(router_address);
 
-        std::string discovery_address = "udp://*:" + std::to_string(discovery_port_);
-        discovery_socket_->bind(discovery_address);
+        // std::string discovery_address = "udp://*:" + std::to_string(discovery_port_); // Commented out
+        // if (discovery_socket_) discovery_socket_->bind(discovery_address); // Commented out
 
         int linger = 0;
         router_socket_->set(zmq::sockopt::linger, linger);
-        discovery_socket_->set(zmq::sockopt::linger, linger);
+        // if (discovery_socket_) discovery_socket_->set(zmq::sockopt::linger, linger); // Commented out
 
         LOG_INFO("MeshNetwork::start(): Setting socket options for " << local_node_.id);
         // Redundant linger declaration removed.
@@ -561,7 +563,7 @@ void MeshNetwork::stop() {
     }
 
     LOG_INFO("MeshNetwork::stop(): Sending GOODBYE from " << local_node_.id);
-    Json::Value goodbye_data;
+    nlohmann::json goodbye_data;
     goodbye_data["sender"] = local_node_.id; // Changed "node_id" to "sender"
     goodbye_data["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -666,7 +668,7 @@ bool MeshNetwork::send_unicast(const NodeId& target, const std::string& message)
         return false;
     }
 
-    Json::Value data_json; // Renamed to avoid conflict with 'data' parameter in other functions
+    nlohmann::json data_json; // Renamed to avoid conflict with 'data' parameter in other functions
     data_json["sender"] = local_node_.id;
     data_json["target"] = target.id;
     data_json["message"] = message;
@@ -687,7 +689,7 @@ bool MeshNetwork::send_unicast(const NodeId& target, const std::string& message)
 }
 
 bool MeshNetwork::send_broadcast(const std::string& message) {
-    Json::Value data_json; // Renamed
+    nlohmann::json data_json; // Renamed
     data_json["sender"] = local_node_.id;
     data_json["message"] = message;
     data_json["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -741,13 +743,13 @@ size_t MeshNetwork::get_peer_count() const {
 
 void MeshNetwork::message_handler_loop() {
     zmq::pollitem_t items[] = {
-        { *router_socket_, 0, ZMQ_POLLIN, 0 },      // Use * to get the socket handle
-        { *discovery_socket_, 0, ZMQ_POLLIN, 0 }  // Use * to get the socket handle
+        { *router_socket_, 0, ZMQ_POLLIN, 0 }      // Use * to get the socket handle
+        // { *discovery_socket_, 0, ZMQ_POLLIN, 0 }  // Commented out
     };
 
     while (running_.load()) {
         try {
-            zmq::poll(items, 2, std::chrono::milliseconds(100)); // Poll both sockets
+            zmq::poll(items, 1, std::chrono::milliseconds(100)); // Poll only router_socket_
 
             if (items[0].revents & ZMQ_POLLIN) {
                 zmq::message_t identity, received_message;
@@ -757,13 +759,13 @@ void MeshNetwork::message_handler_loop() {
                     handle_message(identity, received_message);
                 }
             }
-            if (items[1].revents & ZMQ_POLLIN) {
-                 zmq::message_t discovery_msg_zmq;
-                 // Assuming discovery_socket_ is a regular socket, not REQ/REP, so just recv
-                 if(discovery_socket_->recv(discovery_msg_zmq, zmq::recv_flags::dontwait)) { // Removed identity part
-                    handle_discovery_message(discovery_msg_zmq);
-                 }
-            }
+            // if (items[1].revents & ZMQ_POLLIN) { // Commented out discovery socket handling
+            //      zmq::message_t discovery_msg_zmq;
+            //      // Assuming discovery_socket_ is a regular socket, not REQ/REP, so just recv
+            //      if(discovery_socket_ && discovery_socket_->recv(discovery_msg_zmq, zmq::recv_flags::dontwait)) { // Added check for discovery_socket_
+            //         handle_discovery_message(discovery_msg_zmq);
+            //      }
+            // }
         } catch (const zmq::error_t& e) {
             if (running_.load() && e.num() != ETERM) {
                 LOG_ERROR("Message handler_loop ZMQ error: " << e.what());
@@ -776,12 +778,9 @@ void MeshNetwork::message_handler_loop() {
     }
 }
 
-std::string MeshNetwork::create_message(MessageType type, const Json::Value& data) {
-    Json::Value message_root;
+std::string MeshNetwork::create_message(MessageType type, const nlohmann::json& data) {
+    nlohmann::json message_root;
     message_root["type"] = static_cast<uint8_t>(type);
     message_root["data"] = data;
-
-    Json::StreamWriterBuilder builder;
-    builder["indentation"] = "";
-    return Json::writeString(builder, message_root);
+    return message_root.dump();
 }
