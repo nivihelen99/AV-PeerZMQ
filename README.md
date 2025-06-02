@@ -28,6 +28,16 @@ Peer-to-Peer Mesh Networking Library
 
 ---
 
+## Documentation
+
+For more detailed information on the library's requirements and design, please refer to the documents in the `docs` directory:
+
+- **[Requirements](./docs/requirements.md):** Outlines the functional and non-functional requirements.
+- **[Design Document](./docs/design.md):** Provides an in-depth look at the architecture, components, and protocols.
+- **[Documentation Index](./docs/README.md):** Index for all documentation.
+
+---
+
 ## 2. Architecture & Components
 
 ### 2.1 Core Classes and Structures
@@ -109,13 +119,13 @@ All messages are JSON objects with at least:
   * Type-specific fields.
 
 ```cpp
-enum class MessageType {
-    HEARTBEAT     = 0,
-    PEER_DISCOVERY = 1, // used in UDP broadcasts or TCP requests for peer lists
-    UNICAST       = 2,  // application-level unicast
-    BROADCAST     = 3,  // application-level broadcast
-    PEER_LIST     = 4,  // response to TCP PEER_DISCOVERY, contains an array of peers
-    GOODBYE       = 5   // graceful node shutdown notification
+enum class MessageType : uint8_t { // Aligned with mesh_network.h
+    HEARTBEAT      = 1,
+    PEER_DISCOVERY = 2, // Used for UDP broadcast and requesting peer lists
+    UNICAST        = 3, // Application-level message for a single peer
+    BROADCAST      = 4, // Application-level message for all direct peers
+    PEER_LIST      = 5, // Response to PEER_DISCOVERY, contains list of known peers
+    GOODBYE        = 6  // Sent when a node is gracefully shutting down
 };
 ```
 
